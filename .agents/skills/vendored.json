@@ -1,0 +1,25 @@
+{
+  "source": "https://github.com/dotnet/skills",
+  "commit": "e115891bd2ac",
+  "license": "dotnet-skills.LICENSE.txt",
+  "copiedFrom": "https://github.com/HeroesReplay/HeroesReplay/tree/develop/.agents/skills",
+  "note": "Vendored official .NET skills, unedited. They are the subset of HeroesReplay's vendored set (same dotnet/skills commit) that fits a small .NET 10 library with xUnit tests and a NuGet package. Update by copying the listed folders from that commit (or a newer one, then change commit). AgentDocsTests checks that every folder under .agents/skills is either here or a first-party skill named in AGENTS.md.",
+  "skills": [
+    "analyzing-dotnet-performance",
+    "assertion-quality",
+    "convert-to-cpm",
+    "coverage-analysis",
+    "csharp-refactoring",
+    "directory-build-organization",
+    "filter-syntax",
+    "incremental-build",
+    "microbenchmarking",
+    "msbuild-antipatterns",
+    "platform-detection",
+    "property-patterns",
+    "run-tests",
+    "setup-local-sdk",
+    "test-anti-patterns",
+    "test-smell-detection"
+  ]
+}
