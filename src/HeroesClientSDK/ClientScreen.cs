@@ -552,14 +552,10 @@ public sealed class ClientScreen : IDisposable
             kind = ClientScreenKind.Authenticating;
         }
 
-        if (
-            kind
-            is ClientScreenKind.Login
-                or ClientScreenKind.Home
-                or ClientScreenKind.Menu
-                or ClientScreenKind.Score
-                or ClientScreenKind.NoScreen
-        )
+        // A dialog covers whatever screen is under it. The "version ... is not available" message
+        // first shows over the boot splash, then over the login screen (2.57.0.98348,
+        // 2026-10-08 16:50:23).
+        if (kind is not (ClientScreenKind.MapLoading or ClientScreenKind.Awards))
         {
             if (Contains(dialogs, DownloadDialog))
             {

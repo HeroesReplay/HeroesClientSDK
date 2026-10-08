@@ -149,28 +149,37 @@ public class ClientScreenStateTests
     [Fact]
     public void Read_AGameLaunchMessageDialogNamesItsResult()
     {
-        // 2.57.0.98348 asked by HeroesSwitcher for a replay of a build Blizzard no longer serves:
-        // a shown CStandardDialog (0x73) over ScreenLoginUnified, CLoginDialog hidden (0x72), and
-        // the launch manager's result.
+        // 2.57.0.98348, 2026-10-08 16:50, asked by HeroesSwitcher for a 2.57.0.98297 replay (a
+        // build Blizzard no longer serves): "The version of Heroes of the Storm required to play
+        // this game is not available." in a shown CStandardDialog (0x73), first over the boot
+        // splash (mask 0x20) and 2.6 s later over ScreenLoginUnified, with CLoginDialog hidden.
+        // The launch manager held result 23, GameLaunchUnsupportedNoData, in launch state 1.
         var client = new FakeGlueClient();
         using var memory = new ClientScreen();
         ClientModule module = client.Module(84);
+        client.ShowScreens(BootMask);
+        client.AddLoadingScreen(BarHidden, PanelHidden);
+        long dialog = client.AddDialog("CStandardDialog", 0x73);
+        client.AddLaunchManager(23);
+        client.SetLaunchState(1);
+
+        ClientScreenSample overSplash = memory.Read(module, client);
         client.ShowScreens(LoginMask);
         client.AddDialog("CLoginDialog", 0x72);
-        long dialog = client.AddDialog("CStandardDialog", 0x73);
-        client.AddLaunchManager(10);
-
-        ClientScreenSample shown = memory.Read(module, client);
+        ClientScreenSample overLogin = memory.Read(module, client);
         client.SetFlags(dialog, 0x72);
         client.SetLaunchResult(0);
         ClientScreenSample gone = memory.Read(module, client);
 
-        Assert.Equal(ClientScreenKind.Dialog, shown.Screen);
-        Assert.Equal(new[] { "CStandardDialog" }, shown.Dialogs);
-        Assert.Equal(10, shown.LaunchResultCode);
-        Assert.Equal("GameLaunchBaseBuildMissing", shown.LaunchResult);
-        Assert.False(shown.OnLogin);
-        Assert.False(shown.OnHome);
+        Assert.Equal(ClientScreenKind.Dialog, overSplash.Screen);
+        Assert.Equal(ClientScreenKind.Dialog, overLogin.Screen);
+        Assert.Equal(new[] { "CStandardDialog" }, overLogin.Dialogs);
+        Assert.Equal(23, overLogin.LaunchResultCode);
+        Assert.Equal("GameLaunchUnsupportedNoData", overLogin.LaunchResult);
+        Assert.Equal(1, overLogin.LaunchState);
+        Assert.False(overLogin.OnLogin);
+        Assert.False(overLogin.OnHome);
+        Assert.False(overSplash.MapLoading);
         Assert.Equal(ClientScreenKind.Login, gone.Screen);
         Assert.Equal(0, gone.LaunchResultCode);
         Assert.Null(gone.LaunchResult);
