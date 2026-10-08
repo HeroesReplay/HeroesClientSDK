@@ -228,8 +228,11 @@ class names are read):
   frame. Its `CCustomLoadingPanel` child (the players) shows only on a map loading screen
   (`MapLoading`); on the boot splash it is hidden (`Splash`). A previous-patch client that loads a
   replay straight from the file can show its map loading screen with no screen bit, and the panel
-  still names it. When the panel cannot be read the sample says `Loading`, and `MapLoading` falls
-  back to "after a menu or a match".
+  still names it. Before a process has shown any menu, the panel counts only after it has read
+  shown on every read for one second (two reads or more): the newest exe at the start of a
+  HeroesSwitcher handoff can show it for a moment on its boot splash. Until then the sample says
+  `Loading` (reason `map-panel-unconfirmed`). When the panel cannot be read the sample also says
+  `Loading`, and `MapLoading` falls back to "after a menu or a match".
 - **Authentication or the login form.** Battle.net's AUTHENTICATION "Connecting..." panel is a
   `CLoginDialog` shown at the top of the UI over `ScreenLoginUnified` (`Authenticating`). The
   email and password form is the same screen with no dialog over it (`Login`).

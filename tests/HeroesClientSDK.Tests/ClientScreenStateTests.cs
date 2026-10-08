@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using Xunit;
 
@@ -57,8 +58,10 @@ public class ClientScreenStateTests
         // 2.57.0.98304 opened through HeroesSwitcher with the replay: the boot splash shows
         // ScreenLoading alone, then the map loading screen shows with an empty mask but the
         // ScreenLoading frame's map panel shown, then the match.
+        // No menu was seen, so the panel counts once it has read shown for a second.
         var client = new FakeGlueClient(fileVersion: "2.57.0.98304");
-        using var memory = new ClientScreen();
+        DateTimeOffset now = Start;
+        using var memory = new ClientScreen(TestTime.Options(() => now));
         ClientModule module = client.Module(81);
 
         client.ShowScreens(BootMask);
@@ -66,17 +69,162 @@ public class ClientScreenStateTests
         ClientScreenSample boot = memory.Read(module, client);
         client.ShowScreens(0);
         client.AddLoadingScreen(Shown, Shown);
+        now += TimeSpan.FromSeconds(1);
+        ClientScreenSample first = memory.Read(module, client);
+        now += TimeSpan.FromSeconds(1.4);
         ClientScreenSample map = memory.Read(module, client);
         client.TearDownMenus();
         ClientScreenSample match = memory.Read(module, client);
 
         Assert.Equal(ClientScreenKind.Splash, boot.Screen);
         Assert.False(boot.MapLoading);
+        Assert.Equal(ClientScreenKind.Loading, first.Screen);
+        Assert.Equal("map-panel-unconfirmed", first.Reason);
+        Assert.Null(first.MapLoading);
+        Assert.True(first.OnLoading);
         Assert.Equal(ClientScreenKind.MapLoading, map.Screen);
         Assert.Equal("map-panel", map.Reason);
         Assert.True(map.MapLoading);
         Assert.False(map.MenuSeen);
         Assert.Equal(ClientScreenKind.Match, match.Screen);
+    }
+
+    private static readonly DateTimeOffset Start = new(2026, 10, 8, 17, 2, 9, TimeSpan.Zero);
+
+    [Fact]
+    public void Read_TheMapPanelForOneReadOnAHandoffBootSplashIsNotAMap()
+    {
+        // HeroesReplay#292, develop shadow proof, 2026-10-08 18:02:10 (release run): 2.57.0.98348
+        // started by HeroesSwitcher for a 2.57.0.98304 replay. On its boot splash one read found
+        // the map panel shown (mask 0x20, no menu seen) while the saved frame showed the boot
+        // splash; the next read, 1.4 s later, found it hidden, then the DOWNLOADING dialog showed.
+        var client = new FakeGlueClient();
+        DateTimeOffset now = Start;
+        using var memory = new ClientScreen(TestTime.Options(() => now));
+        ClientModule module = client.Module(88);
+        client.ShowScreens(BootMask);
+        client.AddLoadingScreen(BarHidden, PanelHidden);
+        long download = client.AddDialog("CProgressBarDialog", 0x72);
+
+        var reads = new List<ClientScreenSample> { memory.Read(module, client) };
+        client.AddLoadingScreen(BarHidden, Shown);
+        now += TimeSpan.FromSeconds(1);
+        reads.Add(memory.Read(module, client));
+        client.AddLoadingScreen(BarHidden, PanelHidden);
+        now += TimeSpan.FromSeconds(1.4);
+        reads.Add(memory.Read(module, client));
+        client.ShowScreens(0);
+        client.AddLoadingScreen(0x5A, 0x52);
+        client.SetFlags(download, 0x73);
+        now += TimeSpan.FromSeconds(2);
+        reads.Add(memory.Read(module, client));
+
+        Assert.All(reads, read => Assert.NotEqual(true, read.MapLoading));
+        Assert.Equal(ClientScreenKind.Splash, reads[0].Screen);
+        Assert.Equal(ClientScreenKind.Loading, reads[1].Screen);
+        Assert.Equal("map-panel-unconfirmed", reads[1].Reason);
+        Assert.Null(reads[1].MapLoading);
+        Assert.Equal(ClientScreenKind.Splash, reads[2].Screen);
+        Assert.Equal(ClientScreenKind.Download, reads[3].Screen);
+    }
+
+    [Fact]
+    public void Read_BeforeAnyMenu_TheMapPanelCountsAfterASecondOfReads()
+    {
+        // Fast reads (the probe's 250 ms): the panel must read shown on every read for a second.
+        var client = new FakeGlueClient(fileVersion: "2.57.0.98304");
+        DateTimeOffset now = Start;
+        using var memory = new ClientScreen(TestTime.Options(() => now));
+        ClientModule module = client.Module(89);
+        client.ShowScreens(BootMask);
+        client.AddLoadingScreen(Shown, Shown);
+
+        var early = new List<ClientScreenSample>();
+        for (int i = 0; i < 4; i++)
+        {
+            early.Add(memory.Read(module, client));
+            now += TimeSpan.FromMilliseconds(250);
+        }
+
+        ClientScreenSample confirmed = memory.Read(module, client);
+
+        Assert.All(early, read => Assert.Equal(ClientScreenKind.Loading, read.Screen));
+        Assert.All(early, read => Assert.Null(read.MapLoading));
+        Assert.Equal(ClientScreenKind.MapLoading, confirmed.Screen);
+        Assert.True(confirmed.MapLoading);
+    }
+
+    [Fact]
+    public void Read_BeforeAnyMenu_AReadWithoutThePanelStartsTheSecondOver()
+    {
+        var client = new FakeGlueClient(fileVersion: "2.57.0.98304");
+        DateTimeOffset now = Start;
+        using var memory = new ClientScreen(TestTime.Options(() => now));
+        ClientModule module = client.Module(90);
+        client.ShowScreens(BootMask);
+        client.AddLoadingScreen(Shown, Shown);
+
+        memory.Read(module, client);
+        now += TimeSpan.FromSeconds(0.9);
+        client.AddLoadingScreen(BarHidden, PanelHidden);
+        ClientScreenSample hidden = memory.Read(module, client);
+        client.AddLoadingScreen(Shown, Shown);
+        now += TimeSpan.FromSeconds(0.2);
+        ClientScreenSample again = memory.Read(module, client);
+        now += TimeSpan.FromSeconds(0.9);
+        ClientScreenSample stillEarly = memory.Read(module, client);
+        now += TimeSpan.FromSeconds(0.1);
+        ClientScreenSample confirmed = memory.Read(module, client);
+
+        Assert.Equal(ClientScreenKind.Splash, hidden.Screen);
+        Assert.Equal(ClientScreenKind.Loading, again.Screen);
+        Assert.Equal(ClientScreenKind.Loading, stillEarly.Screen);
+        Assert.Equal(ClientScreenKind.MapLoading, confirmed.Screen);
+    }
+
+    [Fact]
+    public void Read_ANewProcessConfirmsItsOwnMapPanel()
+    {
+        // The handoff: the newest exe exits and the older build starts; its run starts over.
+        var newest = new FakeGlueClient();
+        var older = new FakeGlueClient(fileVersion: "2.57.0.98304");
+        DateTimeOffset now = Start;
+        using var memory = new ClientScreen(TestTime.Options(() => now));
+        newest.ShowScreens(BootMask);
+        newest.AddLoadingScreen(Shown, Shown);
+        older.ShowScreens(BootMask);
+        older.AddLoadingScreen(Shown, Shown);
+
+        memory.Read(newest.Module(91), newest);
+        now += TimeSpan.FromSeconds(1.5);
+        ClientScreenSample olderFirst = memory.Read(older.Module(92), older);
+        now += TimeSpan.FromSeconds(1);
+        ClientScreenSample olderConfirmed = memory.Read(older.Module(92), older);
+
+        Assert.Equal(ClientScreenKind.Loading, olderFirst.Screen);
+        Assert.Equal(ClientScreenKind.MapLoading, olderConfirmed.Screen);
+    }
+
+    [Fact]
+    public void Read_AfterAMenu_OneReadOfTheMapPanelIsAMap()
+    {
+        // 2.57.0.98348 opening the replay from home: the boot splash is long over, so the first
+        // read of the map panel is the map loading screen, as in 0.4.1.
+        var client = new FakeGlueClient();
+        DateTimeOffset now = Start;
+        using var memory = new ClientScreen(TestTime.Options(() => now));
+        ClientModule module = client.Module(93);
+        client.ShowScreens(HomeMask);
+        client.AddLoadingScreen(BarHidden, PanelHidden);
+        memory.Read(module, client);
+        client.ShowScreens(BootMask);
+        client.AddLoadingScreen(Shown, Shown);
+
+        ClientScreenSample map = memory.Read(module, client);
+
+        Assert.Equal(ClientScreenKind.MapLoading, map.Screen);
+        Assert.True(map.MapLoading);
+        Assert.True(map.MenuSeen);
     }
 
     [Fact]

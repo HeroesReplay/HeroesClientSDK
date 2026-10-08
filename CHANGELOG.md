@@ -3,6 +3,21 @@
 Each release is a `vX.Y.Z` tag on `main`. Its `.nupkg` and SHA-256 are on the
 [GitHub Release](https://github.com/HeroesReplay/HeroesClientSDK/releases) of that tag.
 
+## 0.4.3
+
+A fix for HeroesReplay#292. No API change.
+
+- **The boot splash of a HeroesSwitcher handoff is no longer a map for one read.** In the
+  HeroesReplay#292 shadow proof (2026-10-08 18:02:10), the newest exe that HeroesSwitcher started
+  for a 2.57.0.98304 replay read `MapLoading` once on its boot splash (the map panel showed for a
+  moment, no menu seen); the next read, 1.4 s later, was `Splash`. Before a process has shown any
+  menu or match, `ClientScreen` now counts the loading screen's map panel only after it has read
+  shown on every read of the same loading frame for one second (two reads or more). Until then the
+  read is `Loading` with reason `map-panel-unconfirmed`, so `MapLoading` is null, not true. A
+  previous-patch client that loads the replay straight from the file still reads `MapLoading`
+  before any menu, one second later. After a menu (the replay opened from home) one read is still
+  enough. A new process starts its own second.
+
 ## 0.4.2
 
 The follow-ups to 0.4.0 (#12). Additive: no 0.4.x name changes, and every read behaves as before.
