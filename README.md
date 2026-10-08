@@ -203,19 +203,29 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
-## Reverse engineering
+## Reverse engineering and agent skills
 
-New reads come from reverse engineering the client. The agent skills in `.agents/skills/` cover
-it:
+New reads come from reverse engineering the client. [AGENTS.md](AGENTS.md) has the repo rules
+(read-only, several clients at once, an optional version, nothing from the client committed) and
+lists every skill in `.agents/skills/`:
 
-- `ghidra`: Ghidra 12.1 headless, per-build projects, and the GhidraScripts in
-  `.agents/skills/ghidra/scripts/`.
-- `heroes-client-re`: the workflow for a new read. It covers a read-only memory image of a
-  running client, finding and confirming a global, a pattern that holds across builds, tests,
-  and the rules.
+- [`heroes-client-re`](.agents/skills/heroes-client-re/SKILL.md): the workflow for a new read. It
+  covers the rules, a read-only memory image of a running client, the UI frame tree and how to name
+  a frame's class, finding and confirming a global, a pattern that holds across builds, tests, and
+  where each HeroesReplay#292 state stands.
+- [`ghidra`](.agents/skills/ghidra/SKILL.md): Ghidra 12.1 headless, per-build projects, and the
+  GhidraScripts in `.agents/skills/ghidra/scripts/`.
+- [`heroes-client-launch`](.agents/skills/heroes-client-launch/SKILL.md): how clients are
+  installed, versioned, started and downloaded. It covers `Versions\Base*`, HeroesSwitcher,
+  Battle.net and its Agent, the current and previous patch, and missing builds.
+- [`dotnet-10-csharpier`](.agents/skills/dotnet-10-csharpier/SKILL.md): this repo's .NET 10
+  build, format, test and package setup.
+- Official .NET skills from [dotnet/skills](https://github.com/dotnet/skills) (MIT): refactoring,
+  MSBuild, NuGet, tests and performance, pinned in `.agents/skills/vendored.json`.
 
-The client exe is encrypted on disk, so code work uses a memory image. Nothing from the client
-(exes, images, Ghidra projects) is committed.
+The client exe is encrypted on disk and its loaded image is not, so code work uses a read-only
+memory image of a running client. Nothing from the client (exes, images, Ghidra projects) is
+committed.
 
 ## License
 
