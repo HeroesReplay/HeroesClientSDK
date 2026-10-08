@@ -33,7 +33,7 @@ GitHub Packages.
 Download the file into a local folder, check its SHA-256, and map the package to that folder:
 
 ```powershell
-$version = '0.4.0'
+$version = '0.4.2'
 New-Item -ItemType Directory -Force .packages | Out-Null
 Invoke-WebRequest "https://github.com/HeroesReplay/HeroesClientSDK/releases/download/v$version/HeroesClientSDK.$version.nupkg" -OutFile ".packages/HeroesClientSDK.$version.nupkg"
 (Get-FileHash ".packages/HeroesClientSDK.$version.nupkg" -Algorithm SHA256).Hash   # compare with the release notes
@@ -70,7 +70,7 @@ repo. In GitHub Actions, the job needs `packages: read`, and the package must gr
 repository read access.
 
 ```powershell
-dotnet add package HeroesClientSDK --version 0.4.0
+dotnet add package HeroesClientSDK --version 0.4.2
 ```
 
 ## Usage
@@ -120,7 +120,8 @@ if (menu.VersionMismatch)
 Keep one `MatchClock`, one `LoadingScreen` and one `ClientScreen` per client for the life of your
 watcher. Each reader starts over by itself when it sees a new client process (pid and start time),
 and retries a failed pattern scan every 10 seconds while a fresh client is still unpacking its
-code.
+code. A `LoadingScreen` and a `ClientScreen` that read the same `HeroesClientProcess` scan the
+client's code once between them (0.4.2); each still keeps its own 10-second retry.
 
 ### The API in one table
 
@@ -128,10 +129,11 @@ code.
 | --- | --- |
 | `MatchClock`, `LoadingScreen`, `ClientScreen` | The readers. Each has `Read(Process process, HeroesClientVersion clientVersion = null)` and `Read(HeroesClientProcess client, HeroesClientVersion clientVersion = null)`. |
 | `MatchClockSample`, `LoadingScreenSample`, `ClientScreenSample` | One read each. Every sample has `Ok`, `Reason`, `ClientVersion` (the running exe, or null) and `VersionMismatch`. |
-| `HeroesClientProcess` | One client attached read-only. `Attach(Process)` never throws and says `Ok` and `Reason` (`no-process`, `open-failed`, `no-module`), with `Module` and `DetectedVersion`. Pass it to every reader to share one handle. `FromMemory(IProcessMemory, ClientModule)` serves a fake or recorded memory instead of a process. |
+| `HeroesClientProcess` | One client attached read-only. `Attach(Process)` never throws and says `Ok` and `Reason` (`no-process`, `open-failed`, `no-module`), with `Module` and `DetectedVersion`. Pass it to every reader to share one handle (and one code scan for the two screen readers). `FromMemory(IProcessMemory, ClientModule)` serves a fake or recorded memory instead of a process. `FromImage(path)` serves a saved module image (`no-image`, `bad-image`). |
 | `IProcessMemory` | `TryRead(address, buffer)`: the only thing a reader needs from a client. Implement it for tests. |
 | `HeroesClientOptions` | Optional reader settings: `Profiles` and `TimeProvider`. |
-| `BuildProfileRegistry`, `BuildProfile` | Per-build data, looked up by the running exe's build: exact build, then patch line (`2.57`), then `Fallback`. Immutable. `Default` holds the generic profile and the fixed clock of `2.55.17.98025`. |
+| `BuildProfileRegistry`, `BuildProfile` | Per-build data, looked up by the running exe's build: exact build, then patch line (`2.57`), then `Fallback`. Immutable. `Default` holds the generic profile and the fixed clock of `2.55.17.98025`. A profile also holds the loading-screen layout (`LoadingScreenLayout`) and the UI frame tree's layout (`FrameTreeLayout`). |
+| `ClientDiscovery` | Every reader's discovery on one client, without reading match or screen state: `Run(client)` gives `Clock`, `Loading` and `Menus` (the globals, offsets, tables and frame classes each reader found) and `Ok`. Works on a saved module image. |
 | `HeroesClientVersion` | A client build: `TryParse`, `FromFile`, `PatchLine`, comparable. |
 | `MatchClockTelemetry` | Where clock discovery stands (`discovering`, `memory-locked`, `memory-unlocked`), from `MatchClock.LastTelemetry`. |
 
@@ -244,7 +246,9 @@ The MVP and awards screen is in-game UI, not a menu screen. The client's UI fram
 above the menu root (`CRoot`, then a `CLayer` per UI, then `CGlueUI` or `CGameUI`). Each frame keeps
 its parent at `+0x50`, its visible bit in the byte at `+0x48`, and its children as an intrusive list
 (first child node at `+0x40`, the child's node at `+0x18`, the next sibling's node at `+0x20`, a
-tagged end). The frame classes carry no RTTI locator, but each one's vtable slot `0x240` is
+tagged end). These offsets are the build profile's `FrameTreeLayout` (0.4.2), so a patch that moves
+them needs a registry entry (`BuildProfileRegistry.WithBuild`), not a code change. The frame
+classes carry no RTTI locator, but each one's vtable slot `0x240` is
 `IsA(type)`, which calls the class's static type accessor, which loads the class name
 (`FrameClass`). So the reader walks the tree once, names each distinct vtable once, and keeps the
 `CEndOfGameAwardsPanel` frame. It exists for the whole match (flags `0x7A`) and turns visible on the
@@ -265,6 +269,32 @@ Each line has the build, the menu screen and the screens shown, the dialogs show
 game-launch result and the launch state, the map loading and signed-in states, the loading screen
 reader, and the match clock. The three readers share one `HeroesClientProcess` per client.
 `--version 2.57.0.98304` reports a client that is another build.
+
+### Checking a new build offline
+
+The exe file cannot be scanned, because its code is encrypted on disk. A read-only image of a
+running client's module can: `Save-ModuleImage.ps1` (skill `heroes-client-re`) saves one under
+`C:\heroesreplay\re\dumps\<version>\`, and `--image` runs every reader's discovery on it
+(`HeroesClientProcess.FromImage` and `ClientDiscovery.Run`), with no client running:
+
+```powershell
+dotnet run --project tools/HeroesClientSDK.Probe -c Release -- --image C:\heroesreplay\re\dumps\2.57.0.98348\HeroesOfTheStorm_x64-2.57.0.98348-image.dmp
+```
+
+```text
+...: 2.57.0.98348, base 0x7FF66CB90000, size 0x45AE000
+clock          pattern: tick 0x338B5A4, speed 0x264262C, 2 sites
+loading-screen pattern: global 0x3770830, 34 sites
+client-screen  pattern: global 0x3770830, mask +0x1D4, frames +0x1F0, 30 screens (ScreenLoading 5, ScreenLoginUnified 6, ScreenHome 8, ScreenScore 15)
+game-launch    global 0x3771BA8, result +0x8, state +0x20, 24 keys
+frame-classes  825 named, none missing
+ok in 248 ms
+```
+
+It exits 0 when every reader finds what it needs, 1 when one does not, and 2 when the file is not
+an image. Run it on the current patch's image and on a previous patch's before a release, and on a
+new build's image before HeroesReplay plays it. The match, menu and frame-tree state lives on the
+heap, which an image does not hold, so those reads still need a live client.
 
 ## Build
 
@@ -311,8 +341,9 @@ lists every skill in `.agents/skills/`:
   MSBuild, NuGet, tests and performance, pinned in `.agents/skills/vendored.json`.
 
 The client exe is encrypted on disk and its loaded image is not, so code work uses a read-only
-memory image of a running client. Nothing from the client (exes, images, Ghidra projects) is
-committed.
+memory image of a running client, and `heroes-client-probe --image` checks the readers on one.
+Nothing from the client (exes, images, Ghidra projects) is committed; a test keeps only the few
+bytes it needs (for example `Image98348`, derived from the 2.57.0.98348 image).
 
 ## License
 

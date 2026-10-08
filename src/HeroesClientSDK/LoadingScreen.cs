@@ -94,6 +94,9 @@ public sealed class LoadingScreen : IDisposable
     private bool menuSeen;
     private DateTimeOffset rediscoverAt;
     private string reason = "no-process";
+    private int sites;
+    private readonly ScreenScans ownScans = new();
+    private ScreenScan lastScan;
 
     /// <summary>A reader with <paramref name="options"/>, or the defaults when null.</summary>
     public LoadingScreen(HeroesClientOptions options = null)
@@ -103,6 +106,10 @@ public sealed class LoadingScreen : IDisposable
     }
 
     internal long GlobalRva => globalRva;
+
+    internal int Sites => sites;
+
+    internal string DiscoveryReason => reason;
 
     /// <summary>
     /// Reads the screen state of <paramref name="process"/>. A new process (pid and start time)
@@ -129,13 +136,14 @@ public sealed class LoadingScreen : IDisposable
             return new LoadingScreenSample(LoadingScreenKind.Unknown, false, reason);
         }
 
-        return Read(client.Module, client.Memory, clientVersion);
+        return Read(client.Module, client.Memory, clientVersion, client.ScreenScans);
     }
 
     internal LoadingScreenSample Read(
         ClientModule module,
         IProcessMemory memory,
-        HeroesClientVersion clientVersion = null
+        HeroesClientVersion clientVersion = null,
+        ScreenScans scans = null
     )
     {
         HeroesClientVersion running = HeroesClientVersion.TryParse(module.FileVersion);
@@ -152,7 +160,7 @@ public sealed class LoadingScreen : IDisposable
         UseModule(module);
         if (!discovered || (globalRva == 0 && time.GetUtcNow() >= rediscoverAt))
         {
-            Discover(memory, running ?? clientVersion);
+            Discover(memory, module, running ?? clientVersion, scans ?? ownScans);
         }
 
         if (globalRva == 0)
@@ -223,39 +231,37 @@ public sealed class LoadingScreen : IDisposable
         layout = LoadingScreenLayout.Default;
         menuSeen = false;
         rediscoverAt = default;
+        sites = 0;
+        lastScan = null;
     }
 
-    private void Discover(IProcessMemory memory, HeroesClientVersion build)
+    /// <summary>
+    /// Finds the screen-state global in the client's code scan, which this reader shares with a
+    /// <see cref="ClientScreen"/> that reads the same <see cref="HeroesClientProcess"/>.
+    /// </summary>
+    private void Discover(
+        IProcessMemory memory,
+        ClientModule module,
+        HeroesClientVersion build,
+        ScreenScans scans
+    )
     {
         discovered = true;
-        rediscoverAt = time.GetUtcNow() + RediscoverAfter;
+        DateTimeOffset now = time.GetUtcNow();
+        rediscoverAt = now + RediscoverAfter;
         layout = profiles.Resolve(build).LoadingScreen ?? LoadingScreenLayout.Default;
-        if (!ModuleScanner.TrySections(memory, moduleBase, moduleSize, out var sections))
+        ScreenScan scan = scans.For(memory, module, lastScan, now);
+        lastScan = scan;
+        if (scan.Sections == null)
         {
             reason = "read-failed";
             return;
         }
 
-        var found = new List<long>();
-        foreach (ModuleSection section in sections)
-        {
-            if (!section.Executable)
-            {
-                continue;
-            }
-
-            ModuleScanner.Walk(
-                memory,
-                moduleBase,
-                section,
-                LoadingScreenPattern.Width,
-                (slice, rva) => found.AddRange(LoadingScreenPattern.Find(slice, rva))
-            );
-        }
-
         // Code that is still being unpacked has no sites yet; the next attempt reads it again.
+        List<long> found = scan.ScreenGlobals;
         if (
-            !LoadingScreenPattern.TryAgree(found, out long rva, out _)
+            !LoadingScreenPattern.TryAgree(found, out long rva, out int agreed)
             || rva <= 0
             || rva > moduleSize - 8
         )
@@ -265,6 +271,7 @@ public sealed class LoadingScreen : IDisposable
         }
 
         globalRva = rva;
+        sites = agreed;
         reason = "pattern";
     }
 
