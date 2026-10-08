@@ -1,13 +1,14 @@
 name: publish
 
-# Push a vX.Y.Z tag to publish HeroesClientSDK X.Y.Z to GitHub Packages.
+# Push a vX.Y.Z tag to publish HeroesClientSDK X.Y.Z: the .nupkg goes to GitHub Packages and is
+# attached to the GitHub Release of that tag, which anyone can download without credentials.
 on:
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: read
+  contents: write
   packages: write
 
 jobs:
@@ -58,3 +59,34 @@ jobs:
           if-no-files-found: error
       - name: Push to GitHub Packages
         run: dotnet nuget push "artifacts/HeroesClientSDK.${{ steps.version.outputs.version }}.nupkg" --source https://nuget.pkg.github.com/HeroesReplay/index.json --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate
+      # The same file as the GitHub Packages push, so its SHA-256 matches. An asset that is already
+      # on the release is never replaced: consumers pin its hash (HeroesReplay pins it).
+      - name: Attach to the GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          $tag = '${{ github.ref_name }}'
+          $repo = '${{ github.repository }}'
+          $files = @(Get-ChildItem artifacts -File | Where-Object { $_.Extension -in '.nupkg', '.snupkg' })
+          $nupkg = $files | Where-Object Extension -eq '.nupkg' | Select-Object -First 1
+          $sha = (Get-FileHash -LiteralPath $nupkg.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          gh release view $tag --repo $repo *> $null
+          if ($LASTEXITCODE -ne 0) {
+            $notes = "HeroesClientSDK ${{ steps.version.outputs.version }}.`n`n``$($nupkg.Name)`` is the package pushed to GitHub Packages by this run. It downloads without credentials.`n`nSHA-256: ``$sha``"
+            gh release create $tag @($files.FullName) --repo $repo --verify-tag --title "HeroesClientSDK ${{ steps.version.outputs.version }}" --notes $notes
+            if ($LASTEXITCODE -ne 0) { throw "gh release create failed." }
+            Write-Host "Created release $tag with $($files.Name -join ', ') (SHA-256 $sha)."
+            exit 0
+          }
+
+          $existing = @(gh release view $tag --repo $repo --json assets --jq '.assets[].name')
+          $missing = @($files | Where-Object { $existing -notcontains $_.Name })
+          if ($missing.Count -eq 0) {
+            Write-Host "Release $tag already has $($files.Name -join ', '). Not replaced."
+            exit 0
+          }
+
+          gh release upload $tag @($missing.FullName) --repo $repo
+          if ($LASTEXITCODE -ne 0) { throw "gh release upload failed." }
+          Write-Host "Attached $($missing.Name -join ', ') to release $tag (SHA-256 $sha)."

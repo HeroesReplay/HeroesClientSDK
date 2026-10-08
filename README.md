@@ -16,36 +16,51 @@ automated Heroes of the Storm spectator, which uses it to drive replays.
 
 ## Install
 
-The package is on GitHub Packages. GitHub Packages needs a token for NuGet restores, even for a
-public package. Use a classic token with `read:packages` (or `gh auth token` when `gh` is logged
-in with that scope).
+Every release attaches `HeroesClientSDK.<version>.nupkg` to its
+[GitHub Release](https://github.com/HeroesReplay/HeroesClientSDK/releases). That file downloads
+without credentials, and the release notes give its SHA-256. The same file is also pushed to
+GitHub Packages.
+
+### From the release asset (no credentials)
+
+Download the file into a local folder, check its SHA-256, and map the package to that folder:
+
+```powershell
+$version = '0.1.0'
+New-Item -ItemType Directory -Force .packages | Out-Null
+Invoke-WebRequest "https://github.com/HeroesReplay/HeroesClientSDK/releases/download/v$version/HeroesClientSDK.$version.nupkg" -OutFile ".packages/HeroesClientSDK.$version.nupkg"
+(Get-FileHash ".packages/HeroesClientSDK.$version.nupkg" -Algorithm SHA256).Hash   # compare with the release notes
+```
 
 ```xml
 <!-- nuget.config -->
 <configuration>
   <packageSources>
+    <clear />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
-    <add key="github" value="https://nuget.pkg.github.com/HeroesReplay/index.json" />
+    <add key="heroesclientsdk" value=".packages" />
   </packageSources>
   <packageSourceMapping>
     <packageSource key="nuget.org">
       <package pattern="*" />
     </packageSource>
-    <packageSource key="github">
+    <packageSource key="heroesclientsdk">
       <package pattern="HeroesClientSDK" />
     </packageSource>
   </packageSourceMapping>
 </configuration>
 ```
 
-Store the credential in your user-level NuGet config, not the repo file:
+HeroesReplay does this with `tools/restore-sdk-package.ps1`. It pins the version and the SHA-256
+together in `Directory.Packages.props`.
 
-```powershell
-dotnet nuget update source github --username <github-user> --password (gh auth token) --store-password-in-clear-text
-```
+### From GitHub Packages
 
-In GitHub Actions, give the job `packages: read` and authenticate the source with
-`GITHUB_TOKEN` before restore.
+GitHub Packages needs a token with `read:packages` for any NuGet restore, even of a public
+package. Add `https://nuget.pkg.github.com/HeroesReplay/index.json` as a source, map
+`HeroesClientSDK` to it, and keep the credential in your user-level NuGet config, not in the
+repo. In GitHub Actions, the job needs `packages: read`, and the package must grant that
+repository read access.
 
 ```powershell
 dotnet add package HeroesClientSDK --version 0.1.0
@@ -130,7 +145,9 @@ dotnet pack src/HeroesClientSDK -c Release -o artifacts
 ## Releases
 
 Versions come from git tags (`vX.Y.Z`, MinVer). Pushing a tag runs `publish.yml`, which builds,
-tests, packs that version, and pushes it to GitHub Packages.
+tests, and packs that version, pushes it to GitHub Packages, and attaches the same `.nupkg` to the
+tag's GitHub Release with its SHA-256 in the notes. An asset already on a release is never
+replaced, because consumers pin its hash.
 
 ```powershell
 git tag v0.1.1
