@@ -66,6 +66,15 @@ public sealed record ClientScreenDiscovery(
 )
 {
     /// <summary>
+    /// Where a message dialog keeps its title and message text: from the client's code when
+    /// <see cref="DialogTextFromCode"/>, else from the build profile.
+    /// </summary>
+    public DialogTextLayout DialogText { get; init; } = DialogTextLayout.Default;
+
+    /// <summary>True when <see cref="DialogText"/> came from the client's code.</summary>
+    public bool DialogTextFromCode { get; init; }
+
+    /// <summary>
     /// True when the menu root, the screen table, the game-launch manager and every frame class
     /// the reader names are found.
     /// </summary>
@@ -174,6 +183,10 @@ public sealed record ClientDiscovery(
                 classes.Count,
                 missing
             )
+            {
+                DialogText = menus.DialogText,
+                DialogTextFromCode = menus.DialogTextFromCode,
+            }
         );
     }
 }

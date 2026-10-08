@@ -33,7 +33,7 @@ GitHub Packages.
 Download the file into a local folder, check its SHA-256, and map the package to that folder:
 
 ```powershell
-$version = '0.4.2'
+$version = '0.4.4'
 New-Item -ItemType Directory -Force .packages | Out-Null
 Invoke-WebRequest "https://github.com/HeroesReplay/HeroesClientSDK/releases/download/v$version/HeroesClientSDK.$version.nupkg" -OutFile ".packages/HeroesClientSDK.$version.nupkg"
 (Get-FileHash ".packages/HeroesClientSDK.$version.nupkg" -Algorithm SHA256).Hash   # compare with the release notes
@@ -70,7 +70,7 @@ repo. In GitHub Actions, the job needs `packages: read`, and the package must gr
 repository read access.
 
 ```powershell
-dotnet add package HeroesClientSDK --version 0.4.2
+dotnet add package HeroesClientSDK --version 0.4.4
 ```
 
 ## Usage
@@ -242,6 +242,12 @@ class names are read):
   from its creator code, `GameLaunchPattern`) keeps the last launch result, and the client's own
   `@UI/GameLaunch*` table names it (`LaunchResult`), so the message is known without reading its
   text in any language.
+- **Dialog text.** Each shown dialog comes with the title and message its labels hold
+  (`DialogMessages`, 0.4.4): a standard dialog's title label at `+0x248` and message label at
+  `+0x250`, and a label's UTF-8 string at `[[label+0x1D8]+0x28]+0x18`, found in the client's own
+  code (`DialogTextPattern`) or the build profile's `DialogTextLayout`. `BattlenetError` is a shown
+  `CBattlenetErrorDialog` or `CDisconnectedDialog` with that text, such as "The selected region is
+  currently unavailable." or "Game client version mismatch with selected region."
 
 ### How the awards screen is read
 

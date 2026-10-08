@@ -59,6 +59,34 @@ public sealed record FrameTreeLayout(
 }
 
 /// <summary>
+/// Where a message dialog keeps its text. A <c>CStandardDialog</c> (and every dialog built on it:
+/// <c>CBattlenetErrorDialog</c>, <c>CDisconnectedDialog</c>, <c>CLoginDialog</c>...) holds its
+/// title label at <see cref="TitleLabelOffset"/> and its message label at
+/// <see cref="MessageLabelOffset"/>; a <c>CLabel</c> holds a text object at
+/// <see cref="LabelTextOffset"/>, whose <see cref="TextStringOffset"/> points at a block with the
+/// string at <see cref="StringOffset"/>: a 32-bit length times 4, 32-bit flags (bit 1: the bytes
+/// are behind a pointer), then the UTF-8 bytes or that pointer. <see cref="DialogTextPattern"/>
+/// finds these in the client's code; this is the fallback when it does not. Measured on
+/// 2.57.0.98304 and 2.57.0.98348 (<c>CStandardDialog::ApplyParams</c> and <c>CLabel::SetText</c>).
+/// </summary>
+/// <param name="TitleLabelOffset">The title label's offset in a standard dialog.</param>
+/// <param name="MessageLabelOffset">The message label's offset in a standard dialog.</param>
+/// <param name="LabelTextOffset">The text object's offset in a label.</param>
+/// <param name="TextStringOffset">The string block's pointer offset in the text object.</param>
+/// <param name="StringOffset">The string's offset in that block.</param>
+public sealed record DialogTextLayout(
+    long TitleLabelOffset = 0x248,
+    long MessageLabelOffset = 0x250,
+    long LabelTextOffset = 0x1D8,
+    long TextStringOffset = 0x28,
+    long StringOffset = 0x18
+)
+{
+    /// <summary>The layout of every known build.</summary>
+    public static DialogTextLayout Default { get; } = new();
+}
+
+/// <summary>
 /// Per-build data. The readers find everything by instruction pattern first; a profile adds what
 /// a pattern cannot give for that build. It is chosen by the running exe's build (exact build,
 /// then patch line, then <see cref="BuildProfileRegistry.Fallback"/>), never by a static setting.
@@ -82,6 +110,12 @@ public sealed record BuildProfile
 
     /// <summary>The UI frame tree's layout, which <see cref="ClientScreen"/> walks.</summary>
     public FrameTreeLayout FrameTree { get; init; } = FrameTreeLayout.Default;
+
+    /// <summary>
+    /// Where a message dialog keeps its title and message text, used when
+    /// <see cref="DialogTextPattern"/> does not find it in the client's code.
+    /// </summary>
+    public DialogTextLayout DialogText { get; init; } = DialogTextLayout.Default;
 }
 
 /// <summary>
