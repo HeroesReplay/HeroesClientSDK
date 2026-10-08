@@ -29,14 +29,14 @@ internal static class FrameTree
     /// The top of the tree: the menu root's grandparent (the menu root sits under a menu
     /// container under the top frame). Zero when the chain does not read.
     /// </summary>
-    public static long Top(Func<long, byte[], bool> read, long menuRoot)
+    public static long Top(IProcessMemory memory, long menuRoot)
     {
-        if (!TryPointer(read, menuRoot + ParentOffset, out long container) || container == 0)
+        if (!TryPointer(memory, menuRoot + ParentOffset, out long container) || container == 0)
         {
             return 0;
         }
 
-        return TryPointer(read, container + ParentOffset, out long top) ? top : 0;
+        return TryPointer(memory, container + ParentOffset, out long top) ? top : 0;
     }
 
     /// <summary>
@@ -44,7 +44,7 @@ internal static class FrameTree
     /// <paramref name="match"/> accepts. Returns the frame and its vtable, or zeros.
     /// </summary>
     public static (long Frame, long Vtable) FindFirst(
-        Func<long, byte[], bool> read,
+        IProcessMemory memory,
         long top,
         Func<long, bool> match
     )
@@ -61,7 +61,7 @@ internal static class FrameTree
         {
             (long frame, int depth) = stack.Pop();
             visited++;
-            if (!TryPointer(read, frame, out long vtable))
+            if (!TryPointer(memory, frame, out long vtable))
             {
                 continue;
             }
@@ -71,7 +71,7 @@ internal static class FrameTree
                 return (frame, vtable);
             }
 
-            if (depth >= MaxDepth || !TryPointer(read, frame + FirstChildOffset, out long node))
+            if (depth >= MaxDepth || !TryPointer(memory, frame + FirstChildOffset, out long node))
             {
                 continue;
             }
@@ -81,9 +81,9 @@ internal static class FrameTree
             {
                 long child = node - NodeOffset;
                 if (
-                    !TryPointer(read, child + ParentOffset, out long parent)
+                    !TryPointer(memory, child + ParentOffset, out long parent)
                     || parent != frame
-                    || !TryPointer(read, child + NextOffset, out long next)
+                    || !TryPointer(memory, child + NextOffset, out long next)
                 )
                 {
                     break;
@@ -101,13 +101,13 @@ internal static class FrameTree
     /// True when the frame and every frame above it up to <paramref name="top"/> have their
     /// visible bit set; null when the chain does not read.
     /// </summary>
-    public static bool? Shown(Func<long, byte[], bool> read, long frame, long top)
+    public static bool? Shown(IProcessMemory memory, long frame, long top)
     {
         byte[] flags = new byte[1];
         long current = frame;
         for (int depth = 0; depth < MaxDepth && current != 0; depth++)
         {
-            if (!read(current + FlagsOffset, flags))
+            if (!memory.TryRead(current + FlagsOffset, flags))
             {
                 return null;
             }
@@ -122,7 +122,7 @@ internal static class FrameTree
                 return true;
             }
 
-            if (!TryPointer(read, current + ParentOffset, out current))
+            if (!TryPointer(memory, current + ParentOffset, out current))
             {
                 return null;
             }
@@ -131,11 +131,11 @@ internal static class FrameTree
         return current == 0 ? true : null;
     }
 
-    private static bool TryPointer(Func<long, byte[], bool> read, long address, out long value)
+    private static bool TryPointer(IProcessMemory memory, long address, out long value)
     {
         value = 0;
         byte[] buffer = new byte[8];
-        if (address <= 0 || !read(address, buffer))
+        if (address <= 0 || !memory.TryRead(address, buffer))
         {
             return false;
         }
@@ -162,12 +162,7 @@ internal static class FrameClass
     private const int MaxName = 80;
 
     /// <summary>The class name, or null when the code does not have this shape.</summary>
-    public static string Name(
-        Func<long, byte[], bool> read,
-        long vtable,
-        long moduleBase,
-        long moduleSize
-    )
+    public static string Name(IProcessMemory memory, long vtable, long moduleBase, long moduleSize)
     {
         bool InModule(long address) => address >= moduleBase && address < moduleBase + moduleSize;
         if (!InModule(vtable))
@@ -176,28 +171,28 @@ internal static class FrameClass
         }
 
         byte[] slot = new byte[8];
-        if (!read(vtable + IsASlot, slot))
+        if (!memory.TryRead(vtable + IsASlot, slot))
         {
             return null;
         }
 
         long isA = BitConverter.ToInt64(slot, 0);
         byte[] code = new byte[CodeScan];
-        if (!InModule(isA) || !read(isA, code))
+        if (!InModule(isA) || !memory.TryRead(isA, code))
         {
             return null;
         }
 
         long staticType = FirstCall(code, isA);
         byte[] accessor = new byte[StaticTypeScan];
-        if (!InModule(staticType) || !read(staticType, accessor))
+        if (!InModule(staticType) || !memory.TryRead(staticType, accessor))
         {
             return null;
         }
 
         long name = FirstLeaRcx(accessor, staticType);
         byte[] text = new byte[MaxName];
-        if (!InModule(name) || !read(name, text))
+        if (!InModule(name) || !memory.TryRead(name, text))
         {
             return null;
         }

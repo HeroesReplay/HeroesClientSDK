@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 
 namespace HeroesClientSDK;
 
@@ -68,16 +67,8 @@ internal static class MatchClockPattern
     public const int SpeedDisplacement = 19;
     public const int MovdEnd = 12;
     public const int MulssEnd = 23;
-    private const uint Executable = 0x20000000;
 
     public readonly record struct Site(long TickRva, long SpeedRva);
-
-    public readonly record struct Section(
-        long VirtualAddress,
-        int VirtualSize,
-        int RawPointer,
-        int RawSize
-    );
 
     public static List<Site> Find(ReadOnlySpan<byte> bytes, long byteRva)
     {
@@ -131,102 +122,6 @@ internal static class MatchClockPattern
         }
 
         return true;
-    }
-
-    public static bool TryResolveFile(
-        string path,
-        out long tickRva,
-        out long speedRva,
-        out int sites
-    )
-    {
-        tickRva = 0;
-        speedRva = 0;
-        sites = 0;
-        if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
-        {
-            return false;
-        }
-
-        byte[] file = File.ReadAllBytes(path);
-        if (!TryExecutableSections(file, out List<Section> sections))
-        {
-            return false;
-        }
-
-        var found = new List<Site>();
-        foreach (Section section in sections)
-        {
-            int size = section.RawSize > 0 ? section.RawSize : section.VirtualSize;
-            if (section.VirtualSize > 0 && section.VirtualSize < size)
-            {
-                size = section.VirtualSize;
-            }
-
-            if (size <= 0 || section.RawPointer < 0 || section.RawPointer + size > file.Length)
-            {
-                continue;
-            }
-
-            found.AddRange(Find(file.AsSpan(section.RawPointer, size), section.VirtualAddress));
-        }
-
-        sites = found.Count;
-        return TryAgree(found, out tickRva, out speedRva);
-    }
-
-    public static bool TryExecutableSections(ReadOnlySpan<byte> headers, out List<Section> sections)
-    {
-        sections = new List<Section>();
-        if (headers.Length < 0x40 || headers[0] != (byte)'M' || headers[1] != (byte)'Z')
-        {
-            return false;
-        }
-
-        int lfanew = BitConverter.ToInt32(headers.Slice(0x3C, 4));
-        if (lfanew <= 0 || lfanew + 24 > headers.Length)
-        {
-            return false;
-        }
-
-        if (
-            headers[lfanew] != (byte)'P'
-            || headers[lfanew + 1] != (byte)'E'
-            || headers[lfanew + 2] != 0
-            || headers[lfanew + 3] != 0
-        )
-        {
-            return false;
-        }
-
-        int sectionCount = BitConverter.ToUInt16(headers.Slice(lfanew + 6, 2));
-        int optionalSize = BitConverter.ToUInt16(headers.Slice(lfanew + 20, 2));
-        int table = lfanew + 24 + optionalSize;
-        if (sectionCount <= 0 || table + sectionCount * 40 > headers.Length)
-        {
-            return false;
-        }
-
-        for (int i = 0; i < sectionCount; i++)
-        {
-            int at = table + i * 40;
-            uint characteristics = BitConverter.ToUInt32(headers.Slice(at + 36, 4));
-            if ((characteristics & Executable) == 0)
-            {
-                continue;
-            }
-
-            sections.Add(
-                new Section(
-                    BitConverter.ToUInt32(headers.Slice(at + 12, 4)),
-                    BitConverter.ToInt32(headers.Slice(at + 8, 4)),
-                    BitConverter.ToInt32(headers.Slice(at + 20, 4)),
-                    BitConverter.ToInt32(headers.Slice(at + 16, 4))
-                )
-            );
-        }
-
-        return sections.Count > 0;
     }
 
     private static bool Matches(ReadOnlySpan<byte> bytes, int at)

@@ -11,7 +11,7 @@ namespace HeroesClientSDK.Tests;
 /// (2.57.0.98348 and 2.57.0.98304, read-only). Only the few bytes each read needs are here.
 /// </summary>
 [Trait(TestCategories.Category, TestCategories.Unit)]
-public class ClientScreenMemoryTests
+public class ClientScreenTests
 {
     // 2.57.0.98348 and 2.57.0.98304: the screen template table, in index order (30 screens).
     internal static readonly string[] Screens =
@@ -66,33 +66,33 @@ public class ClientScreenMemoryTests
     public void Read_FollowsACurrentPatchClientFromBootToLoginToHomeToAMatch()
     {
         var client = new FakeGlueClient();
-        using var memory = new ClientScreenMemory();
-        StableClockModule module = client.Module(51);
+        using var memory = new ClientScreen();
+        ClientModule module = client.Module(51);
 
-        ClientScreenSample starting = memory.Read(module, client.Read);
+        ClientScreenSample starting = memory.Read(module, client);
         client.ShowScreens(BootMask);
-        ClientScreenSample boot = memory.Read(module, client.Read);
+        ClientScreenSample boot = memory.Read(module, client);
         client.ShowScreens(LoginMask);
-        ClientScreenSample login = memory.Read(module, client.Read);
+        ClientScreenSample login = memory.Read(module, client);
         client.ShowScreens(HomeMask);
-        ClientScreenSample home = memory.Read(module, client.Read);
+        ClientScreenSample home = memory.Read(module, client);
         client.ShowScreens(BootMask);
-        ClientScreenSample map = memory.Read(module, client.Read);
+        ClientScreenSample map = memory.Read(module, client);
         client.TearDownMenus();
-        ClientScreenSample match = memory.Read(module, client.Read);
+        ClientScreenSample match = memory.Read(module, client);
 
         Assert.Equal(ClientScreenKind.Unknown, starting.Screen);
         Assert.Equal("starting", starting.Reason);
         Assert.Equal(ClientScreenKind.Loading, boot.Screen);
         Assert.Null(boot.MapLoading);
         Assert.Equal(ClientScreenKind.Login, login.Screen);
-        Assert.True(login.LoginForm);
-        Assert.False(login.Home);
+        Assert.True(login.OnLogin);
+        Assert.False(login.OnHome);
         Assert.False(login.SignedIn);
         Assert.Contains("ScreenLoginUnified", login.Shown);
         Assert.Equal(ClientScreenKind.Home, home.Screen);
-        Assert.True(home.Home);
-        Assert.False(home.LoginForm);
+        Assert.True(home.OnHome);
+        Assert.False(home.OnLogin);
         Assert.True(home.SignedIn);
         Assert.Equal(
             new[]
@@ -108,7 +108,7 @@ public class ClientScreenMemoryTests
         Assert.Equal(ClientScreenKind.Loading, map.Screen);
         Assert.True(map.MapLoading);
         Assert.Equal(ClientScreenKind.Match, match.Screen);
-        Assert.False(match.Home);
+        Assert.False(match.OnHome);
         Assert.False(match.MapLoading);
         Assert.Null(match.SignedIn);
     }
@@ -118,21 +118,21 @@ public class ClientScreenMemoryTests
     {
         // 2.57.0.98304, 2026-10-08, opened through HeroesSwitcher: boot splash, then the match.
         var client = new FakeGlueClient();
-        using var memory = new ClientScreenMemory();
-        StableClockModule module = client.Module(52);
+        using var memory = new ClientScreen();
+        ClientModule module = client.Module(52);
 
         client.ShowScreens(BootMask);
-        ClientScreenSample boot = memory.Read(module, client.Read);
+        ClientScreenSample boot = memory.Read(module, client);
         client.ShowScreens(0);
-        ClientScreenSample between = memory.Read(module, client.Read);
+        ClientScreenSample between = memory.Read(module, client);
         client.TearDownMenus();
-        ClientScreenSample match = memory.Read(module, client.Read);
+        ClientScreenSample match = memory.Read(module, client);
 
-        Assert.False(boot.Home);
+        Assert.False(boot.OnHome);
         Assert.Equal(ClientScreenKind.NoScreen, between.Screen);
-        Assert.False(between.Home);
+        Assert.False(between.OnHome);
         Assert.Equal(ClientScreenKind.Match, match.Screen);
-        Assert.False(match.Home);
+        Assert.False(match.OnHome);
         Assert.True(match.MenuSeen);
     }
 
@@ -140,25 +140,25 @@ public class ClientScreenMemoryTests
     public void Read_TheScoreScreenIsNotHome()
     {
         var client = new FakeGlueClient();
-        using var memory = new ClientScreenMemory();
-        StableClockModule module = client.Module(53);
+        using var memory = new ClientScreen();
+        ClientModule module = client.Module(53);
 
         client.ShowScreens(ScoreMask);
-        ClientScreenSample score = memory.Read(module, client.Read);
+        ClientScreenSample score = memory.Read(module, client);
 
         Assert.Equal(ClientScreenKind.Score, score.Screen);
-        Assert.True(score.ScoreScreen);
-        Assert.False(score.Home);
+        Assert.True(score.OnScore);
+        Assert.False(score.OnHome);
     }
 
     [Fact]
     public void Read_FindsTheOffsetsAndTheNamesFromTheClient()
     {
         var client = new FakeGlueClient();
-        using var memory = new ClientScreenMemory();
+        using var memory = new ClientScreen();
 
         client.ShowScreens(HomeMask);
-        memory.Read(client.Module(54), client.Read);
+        memory.Read(client.Module(54), client);
 
         Assert.Equal(FakeGlueClient.GlobalRva, memory.GlobalRva);
         Assert.Equal(0x1D4, memory.MaskOffset);
@@ -170,20 +170,19 @@ public class ClientScreenMemoryTests
     public void Read_NoMaskPatternYet_CannotTellAndScansAgainLater()
     {
         var client = new FakeGlueClient(glueSite: false);
-        using var memory = new ClientScreenMemory();
         DateTimeOffset now = new(2026, 10, 8, 13, 0, 0, TimeSpan.Zero);
-        memory.UtcNow = () => now;
-        StableClockModule module = client.Module(55);
+        using var memory = new ClientScreen(TestTime.Options(() => now));
+        ClientModule module = client.Module(55);
         client.ShowScreens(HomeMask);
 
-        ClientScreenSample unpacking = memory.Read(module, client.Read);
+        ClientScreenSample unpacking = memory.Read(module, client);
         client.AddGlueSite();
-        ClientScreenSample tooSoon = memory.Read(module, client.Read);
+        ClientScreenSample tooSoon = memory.Read(module, client);
         now = now.AddSeconds(11);
-        ClientScreenSample found = memory.Read(module, client.Read);
+        ClientScreenSample found = memory.Read(module, client);
 
         Assert.Equal("unsupported-build", unpacking.Reason);
-        Assert.Null(unpacking.Home);
+        Assert.Null(unpacking.OnHome);
         Assert.Equal(ClientScreenKind.Unknown, tooSoon.Screen);
         Assert.Equal(ClientScreenKind.Home, found.Screen);
     }
@@ -192,10 +191,10 @@ public class ClientScreenMemoryTests
     public void Read_NoScreenTable_ReportsWhy()
     {
         var client = new FakeGlueClient(table: false);
-        using var memory = new ClientScreenMemory();
+        using var memory = new ClientScreen();
         client.ShowScreens(HomeMask);
 
-        ClientScreenSample sample = memory.Read(client.Module(56), client.Read);
+        ClientScreenSample sample = memory.Read(client.Module(56), client);
 
         Assert.Equal(ClientScreenKind.Unknown, sample.Screen);
         Assert.Equal("no-screen-table", sample.Reason);
@@ -205,10 +204,10 @@ public class ClientScreenMemoryTests
     public void Read_AMaskWithBitsPastTheTable_IsNotTrusted()
     {
         var client = new FakeGlueClient();
-        using var memory = new ClientScreenMemory();
+        using var memory = new ClientScreen();
         client.ShowScreens(HomeMask | (1UL << 40));
 
-        ClientScreenSample sample = memory.Read(client.Module(57), client.Read);
+        ClientScreenSample sample = memory.Read(client.Module(57), client);
 
         Assert.Equal(ClientScreenKind.Unknown, sample.Screen);
         Assert.Equal("mask-out-of-range", sample.Reason);
@@ -218,12 +217,12 @@ public class ClientScreenMemoryTests
     public void Read_ANewProcessStartsOver()
     {
         var client = new FakeGlueClient();
-        using var memory = new ClientScreenMemory();
+        using var memory = new ClientScreen();
         client.ShowScreens(HomeMask);
-        memory.Read(client.Module(58), client.Read);
+        memory.Read(client.Module(58), client);
 
         client.TearDownMenus();
-        ClientScreenSample next = memory.Read(client.Module(59), client.Read);
+        ClientScreenSample next = memory.Read(client.Module(59), client);
 
         Assert.Equal(ClientScreenKind.Unknown, next.Screen);
         Assert.Equal("starting", next.Reason);
@@ -234,19 +233,19 @@ public class ClientScreenMemoryTests
     public void Read_NoClientVersionIsNeeded_AndADifferentOneIsReportedNotThrown()
     {
         var client = new FakeGlueClient();
-        using var memory = new ClientScreenMemory();
+        using var memory = new ClientScreen();
         client.ShowScreens(HomeMask);
-        StableClockModule module = client.Module(60);
+        ClientModule module = client.Module(60);
 
-        ClientScreenSample none = memory.Read(module, client.Read);
+        ClientScreenSample none = memory.Read(module, client);
         ClientScreenSample same = memory.Read(
             module,
-            client.Read,
+            client,
             new HeroesClientVersion(2, 57, 0, 98348)
         );
         ClientScreenSample other = memory.Read(
             module,
-            client.Read,
+            client,
             new HeroesClientVersion(2, 57, 0, 98304)
         );
 
@@ -262,13 +261,13 @@ public class ClientScreenMemoryTests
     {
         var current = new FakeGlueClient();
         var previous = new FakeGlueClient(fileVersion: "2.57.0.98304");
-        using var first = new ClientScreenMemory();
-        using var second = new ClientScreenMemory();
+        using var first = new ClientScreen();
+        using var second = new ClientScreen();
         current.ShowScreens(HomeMask);
         previous.ShowScreens(BootMask);
 
-        ClientScreenSample home = first.Read(current.Module(61), current.Read);
-        ClientScreenSample boot = second.Read(previous.Module(62), previous.Read);
+        ClientScreenSample home = first.Read(current.Module(61), current);
+        ClientScreenSample boot = second.Read(previous.Module(62), previous);
 
         Assert.Equal(ClientScreenKind.Home, home.Screen);
         Assert.Equal(ClientScreenKind.Loading, boot.Screen);
@@ -278,22 +277,22 @@ public class ClientScreenMemoryTests
     [Fact]
     public void Classify_LoadingAndLoginCoverTheBackgrounds()
     {
-        Assert.Equal(ClientScreenKind.NoScreen, ClientScreenMemory.Classify(new string[0]));
+        Assert.Equal(ClientScreenKind.NoScreen, ClientScreen.Classify(new string[0]));
         Assert.Equal(
             ClientScreenKind.Menu,
-            ClientScreenMemory.Classify(new[] { "ScreenBackgroundHero", "ScreenCollection" })
+            ClientScreen.Classify(new[] { "ScreenBackgroundHero", "ScreenCollection" })
         );
         Assert.Equal(
             ClientScreenKind.Loading,
-            ClientScreenMemory.Classify(new[] { "ScreenHome", "ScreenLoading" })
+            ClientScreen.Classify(new[] { "ScreenHome", "ScreenLoading" })
         );
         Assert.Equal(
             ClientScreenKind.Login,
-            ClientScreenMemory.Classify(new[] { "ScreenHome", "ScreenLoginUnified" })
+            ClientScreen.Classify(new[] { "ScreenHome", "ScreenLoginUnified" })
         );
         Assert.Equal(
             ClientScreenKind.Score,
-            ClientScreenMemory.Classify(new[] { "ScreenHome", "ScreenScore" })
+            ClientScreen.Classify(new[] { "ScreenHome", "ScreenScore" })
         );
     }
 
@@ -393,7 +392,7 @@ public class ClientScreenMemoryTests
 /// the screen-state global's sites and the mask/frames site, a .rdata with the screen template
 /// table, the global, and the menu root with its mask and frames.
 /// </summary>
-internal sealed class FakeGlueClient
+internal sealed class FakeGlueClient : IProcessMemory
 {
     public const long Base = 0x140000000L;
     public const long ModuleSize = 0x40000;
@@ -440,12 +439,12 @@ internal sealed class FakeGlueClient
         BitConverter.GetBytes(Root).CopyTo(global, 0);
     }
 
-    public StableClockModule Module(int processId) =>
+    public ClientModule Module(int processId) =>
         new(processId, Base, ModuleSize, fileVersion, StartedAt: processId);
 
     public void AddGlueSite()
     {
-        byte[] site = ClientScreenMemoryTests.Hex(
+        byte[] site = ClientScreenTests.Hex(
             "49 8B 81 D4 01 00 00 8B 51 08 48 0F A3 D0 73 1D 49 8B 8C D1 F0 01 00 00"
         );
         Array.Copy(site, 0, text, 0x400, site.Length);
@@ -454,7 +453,7 @@ internal sealed class FakeGlueClient
     /// <summary>The menus exist (a frame per screen) and show the screens in the mask.</summary>
     public void ShowScreens(ulong mask)
     {
-        for (int i = 0; i < ClientScreenMemoryTests.Screens.Length; i++)
+        for (int i = 0; i < ClientScreenTests.Screens.Length; i++)
         {
             BitConverter.GetBytes(FrameBase + i * 0x1000L).CopyTo(root, FramesOffset + i * 8);
         }
@@ -465,11 +464,11 @@ internal sealed class FakeGlueClient
     /// <summary>A match: the frames are gone.</summary>
     public void TearDownMenus()
     {
-        Array.Clear(root, FramesOffset, ClientScreenMemoryTests.Screens.Length * 8);
+        Array.Clear(root, FramesOffset, ClientScreenTests.Screens.Length * 8);
         BitConverter.GetBytes(0UL).CopyTo(root, MaskOffset);
     }
 
-    public bool Read(long address, byte[] buffer)
+    public bool TryRead(long address, Span<byte> buffer)
     {
         return Copy(Base, headers, address, buffer)
             || Copy(Base + TextRva, text, address, buffer)
@@ -479,7 +478,7 @@ internal sealed class FakeGlueClient
             || CopyHeap(address, buffer);
     }
 
-    private bool CopyHeap(long address, byte[] buffer)
+    private bool CopyHeap(long address, Span<byte> buffer)
     {
         foreach (KeyValuePair<long, byte[]> frame in heap)
         {
@@ -511,11 +510,11 @@ internal sealed class FakeGlueClient
         WriteName(0x3000, "CEndOfGameAwardsPanel");
         // vtable[0x240] -> IsA at text 0x700: push rbx; sub rsp,20h; mov rbx,rdx; call StaticType.
         BitConverter.GetBytes(Base + TextRva + 0x700).CopyTo(rdata, 0x3800 + 0x240);
-        byte[] isA = ClientScreenMemoryTests.Hex("40 53 48 83 EC 20 48 8B DA E8 00 00 00 00");
+        byte[] isA = ClientScreenTests.Hex("40 53 48 83 EC 20 48 8B DA E8 00 00 00 00");
         BitConverter.GetBytes(0x800 - (0x700 + 9 + 5)).CopyTo(isA, 10);
         Array.Copy(isA, 0, text, 0x700, isA.Length);
         // StaticType at text 0x800: ... lea rcx,[name].
-        byte[] staticType = ClientScreenMemoryTests.Hex(
+        byte[] staticType = ClientScreenTests.Hex(
             "40 53 48 83 EC 30 8B 05 3C 3F A9 02 A8 01 75 65 83 C8 01 48 C7 44 24 28 0E 00 00 00 48 8D 0D 00 00 00 00"
         );
         BitConverter
@@ -559,7 +558,7 @@ internal sealed class FakeGlueClient
         Array.Copy(bytes, 0, rdata, at, bytes.Length);
     }
 
-    private static bool Copy(long start, byte[] source, long address, byte[] buffer)
+    private static bool Copy(long start, byte[] source, long address, Span<byte> buffer)
     {
         long offset = address - start;
         if (offset < 0 || offset + buffer.Length > source.Length)
@@ -567,7 +566,7 @@ internal sealed class FakeGlueClient
             return false;
         }
 
-        Array.Copy(source, offset, buffer, 0, buffer.Length);
+        source.AsSpan((int)offset, buffer.Length).CopyTo(buffer);
         return true;
     }
 
@@ -627,7 +626,7 @@ internal sealed class FakeGlueClient
         BitConverter.GetBytes(0x3BA700432FBB3E0FL).CopyTo(rdata, 0x0F0);
         int entry = 0x100;
         int stringAt = 0x1000;
-        foreach (string name in ClientScreenMemoryTests.Screens)
+        foreach (string name in ClientScreenTests.Screens)
         {
             byte[] path = Encoding.ASCII.GetBytes(name + "/" + name);
             Array.Copy(path, 0, rdata, stringAt, path.Length);

@@ -1,11 +1,10 @@
-using System;
-
 namespace HeroesClientSDK;
 
 /// <summary>
-/// Build 2.55.17.98025 match clock from HeroesOfTheStorm_x64.exe.
-/// Ghidra FUN_7ff7438a95e0 returns the live tick accumulator times 1/4096.
-/// Read-only. The dynamic page scan (Spectate:MemoryTimerEnabled) is a separate path.
+/// Build 2.55.17.98025 match clock from HeroesOfTheStorm_x64.exe, and the tick-to-seconds rule of
+/// every build. Ghidra FUN_7ff7438a95e0 returns the live tick accumulator times 1/4096. The two
+/// RVAs are that build's <see cref="BuildProfile.FixedClock"/> in
+/// <see cref="BuildProfileRegistry.Default"/>. Read-only.
 /// </summary>
 internal static class MatchTickClock
 {
@@ -16,12 +15,6 @@ internal static class MatchTickClock
 
     /// <summary>DAT_7ff74442862c, 1/4096. Seconds = ticks * this factor.</summary>
     public const long GameSpeedFactorRva = 0x264862C;
-
-    public static bool IsSupportedVersion(string fileVersion)
-    {
-        return !string.IsNullOrEmpty(fileVersion)
-            && fileVersion.Contains("98025", StringComparison.Ordinal);
-    }
 
     public static bool TrySeconds(int ticks, float speed, out double seconds)
     {

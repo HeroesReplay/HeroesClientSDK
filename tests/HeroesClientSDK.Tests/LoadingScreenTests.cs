@@ -5,7 +5,7 @@ using Xunit;
 namespace HeroesClientSDK.Tests;
 
 [Trait(TestCategories.Category, TestCategories.Unit)]
-public class LoadingScreenMemoryTests
+public class LoadingScreenTests
 {
     private const long ModuleBase = 0x140000000L;
     private const long SectionRva = 0x1000;
@@ -55,26 +55,26 @@ public class LoadingScreenMemoryTests
     {
         // 2026-10-02 on 2.57.0.98304: boot splash 1, home 0, map loading 1, match null.
         FakeClient client = FakeClient.WithSites(3);
-        using var memory = new LoadingScreenMemory();
-        StableClockModule module = Module(41);
+        using var memory = new LoadingScreen();
+        ClientModule module = Module(41);
 
         client.ShowScreen(loading: true);
-        LoadingScreenSample boot = memory.Read(module, client.Read);
+        LoadingScreenSample boot = memory.Read(module, client);
         client.ShowScreen(loading: false);
-        LoadingScreenSample home = memory.Read(module, client.Read);
+        LoadingScreenSample home = memory.Read(module, client);
         client.ShowScreen(loading: true);
-        LoadingScreenSample map = memory.Read(module, client.Read);
+        LoadingScreenSample map = memory.Read(module, client);
         client.EnterMatch();
-        LoadingScreenSample match = memory.Read(module, client.Read);
+        LoadingScreenSample match = memory.Read(module, client);
 
         Assert.Equal(GlobalRva, memory.GlobalRva);
-        Assert.Equal(ClientScreen.Loading, boot.Screen);
+        Assert.Equal(LoadingScreenKind.Loading, boot.Screen);
         Assert.Null(boot.MapLoading);
-        Assert.Equal(ClientScreen.Menu, home.Screen);
+        Assert.Equal(LoadingScreenKind.Menu, home.Screen);
         Assert.False(home.MapLoading);
-        Assert.Equal(ClientScreen.Loading, map.Screen);
+        Assert.Equal(LoadingScreenKind.Loading, map.Screen);
         Assert.True(map.MapLoading);
-        Assert.Equal(ClientScreen.Match, match.Screen);
+        Assert.Equal(LoadingScreenKind.Match, match.Screen);
         Assert.False(match.MapLoading);
         Assert.Null(boot.OnMenu);
         Assert.True(home.OnMenu);
@@ -86,12 +86,12 @@ public class LoadingScreenMemoryTests
     public void Read_ANewClientProcessMustShowAMenuAgainBeforeLoadingCounts()
     {
         FakeClient client = FakeClient.WithSites(3);
-        using var memory = new LoadingScreenMemory();
+        using var memory = new LoadingScreen();
         client.ShowScreen(loading: false);
-        memory.Read(Module(42), client.Read);
+        memory.Read(Module(42), client);
 
         client.ShowScreen(loading: true);
-        LoadingScreenSample next = memory.Read(Module(43), client.Read);
+        LoadingScreenSample next = memory.Read(Module(43), client);
 
         Assert.False(next.MenuSeen);
         Assert.Null(next.MapLoading);
@@ -101,22 +101,21 @@ public class LoadingScreenMemoryTests
     public void Read_NoPatternYet_CannotTellAndScansAgainLater()
     {
         FakeClient client = FakeClient.WithSites(0);
-        using var memory = new LoadingScreenMemory();
         DateTimeOffset now = new(2026, 10, 2, 22, 0, 0, TimeSpan.Zero);
-        memory.UtcNow = () => now;
-        StableClockModule module = Module(44);
+        using var memory = new LoadingScreen(TestTime.Options(() => now));
+        ClientModule module = Module(44);
         client.ShowScreen(loading: false);
 
-        LoadingScreenSample unpacking = memory.Read(module, client.Read);
+        LoadingScreenSample unpacking = memory.Read(module, client);
         client.AddSites(3);
-        LoadingScreenSample tooSoon = memory.Read(module, client.Read);
+        LoadingScreenSample tooSoon = memory.Read(module, client);
         now = now.AddSeconds(11);
-        LoadingScreenSample found = memory.Read(module, client.Read);
+        LoadingScreenSample found = memory.Read(module, client);
 
         Assert.Equal("unsupported-build", unpacking.Reason);
         Assert.Null(unpacking.MapLoading);
-        Assert.Equal(ClientScreen.Unknown, tooSoon.Screen);
-        Assert.Equal(ClientScreen.Menu, found.Screen);
+        Assert.Equal(LoadingScreenKind.Unknown, tooSoon.Screen);
+        Assert.Equal(LoadingScreenKind.Menu, found.Screen);
         Assert.False(found.MapLoading);
     }
 
@@ -124,12 +123,12 @@ public class LoadingScreenMemoryTests
     public void Read_APointerThatIsNotAUserAddress_CannotTell()
     {
         FakeClient client = FakeClient.WithSites(3);
-        using var memory = new LoadingScreenMemory();
+        using var memory = new LoadingScreen();
         client.WritePointer(ModuleBase + GlobalRva, 0x1234);
 
-        LoadingScreenSample sample = memory.Read(Module(45), client.Read);
+        LoadingScreenSample sample = memory.Read(Module(45), client);
 
-        Assert.Equal(ClientScreen.Unknown, sample.Screen);
+        Assert.Equal(LoadingScreenKind.Unknown, sample.Screen);
         Assert.Null(sample.MapLoading);
     }
 
@@ -139,17 +138,17 @@ public class LoadingScreenMemoryTests
         // #249: memory said Match (menu seen) while the launch waited for a menu. A match after
         // the menu is the replay on screen. Before any menu, memory does not call it a match.
         FakeClient client = FakeClient.WithSites(3);
-        using var memory = new LoadingScreenMemory();
-        StableClockModule module = Module(47);
+        using var memory = new LoadingScreen();
+        ClientModule module = Module(47);
 
         client.EnterMatch();
-        LoadingScreenSample beforeMenu = memory.Read(module, client.Read);
+        LoadingScreenSample beforeMenu = memory.Read(module, client);
         client.ShowScreen(loading: false);
-        LoadingScreenSample home = memory.Read(module, client.Read);
+        LoadingScreenSample home = memory.Read(module, client);
         client.EnterMatch();
-        LoadingScreenSample match = memory.Read(module, client.Read);
+        LoadingScreenSample match = memory.Read(module, client);
 
-        Assert.Equal(ClientScreen.Match, beforeMenu.Screen);
+        Assert.Equal(LoadingScreenKind.Match, beforeMenu.Screen);
         Assert.False(beforeMenu.InMatch);
         Assert.False(home.InMatch);
         Assert.True(match.InMatch);
@@ -160,20 +159,82 @@ public class LoadingScreenMemoryTests
     public void Read_RelaunchWithTheSamePid_MustShowAMenuAgain()
     {
         FakeClient client = FakeClient.WithSites(3);
-        using var memory = new LoadingScreenMemory();
-        StableClockModule first = Module(48) with { StartedAt = 1000 };
+        using var memory = new LoadingScreen();
+        ClientModule first = Module(48) with { StartedAt = 1000 };
         client.ShowScreen(loading: false);
-        Assert.True(memory.Read(first, client.Read).MenuSeen);
+        Assert.True(memory.Read(first, client).MenuSeen);
 
         client.EnterMatch();
-        LoadingScreenSample relaunched = memory.Read(first with { StartedAt = 2000 }, client.Read);
+        LoadingScreenSample relaunched = memory.Read(first with { StartedAt = 2000 }, client);
 
         Assert.False(relaunched.MenuSeen);
         Assert.False(relaunched.InMatch);
     }
 
-    private static StableClockModule Module(int pid) =>
-        new(pid, ModuleBase, ModuleSize, "2.57.0.98304");
+    [Fact]
+    public void Read_TheLayoutComesFromTheBuildProfile()
+    {
+        // A patch line whose screen object moved: the profile, not new code, says where.
+        var moved = new LoadingScreenLayout(ScreenOffset: 0x300, FlagsOffset: 80, LoadingBit: 1);
+        BuildProfileRegistry profiles = BuildProfileRegistry.Default.WithPatchLine(
+            "2.57",
+            new BuildProfile { Name = "2.57 moved", LoadingScreen = moved }
+        );
+        FakeClient client = FakeClient.WithSites(3);
+        using var memory = new LoadingScreen(new HeroesClientOptions { Profiles = profiles });
+        ClientModule module = Module(49);
+
+        client.ShowScreen(loading: false, moved);
+        LoadingScreenSample home = memory.Read(module, client);
+        client.ShowScreen(loading: true, moved);
+        LoadingScreenSample map = memory.Read(module, client);
+
+        Assert.Equal(LoadingScreenKind.Menu, home.Screen);
+        Assert.Equal(LoadingScreenKind.Loading, map.Screen);
+        Assert.True(map.MapLoading);
+    }
+
+    [Fact]
+    public void Read_APassedVersionThatDiffers_IsReportedAndReadingContinues()
+    {
+        FakeClient client = FakeClient.WithSites(3);
+        using var memory = new LoadingScreen();
+        client.ShowScreen(loading: false);
+
+        LoadingScreenSample none = memory.Read(Module(50), client);
+        LoadingScreenSample other = memory.Read(
+            Module(50),
+            client,
+            new HeroesClientVersion(2, 57, 0, 98348)
+        );
+
+        Assert.True(none.Ok);
+        Assert.False(none.VersionMismatch);
+        Assert.Equal(new HeroesClientVersion(2, 57, 0, 98304), none.ClientVersion);
+        Assert.True(other.VersionMismatch);
+        Assert.Equal(LoadingScreenKind.Menu, other.Screen);
+    }
+
+    [Fact]
+    public void Read_TwoClientsAtOnce_EachReaderKeepsItsOwnMenu()
+    {
+        FakeClient current = FakeClient.WithSites(3);
+        FakeClient previous = FakeClient.WithSites(3);
+        using var first = new LoadingScreen();
+        using var second = new LoadingScreen();
+        current.ShowScreen(loading: false);
+        previous.ShowScreen(loading: true);
+
+        LoadingScreenSample home = first.Read(Module(51), current);
+        LoadingScreenSample boot = second.Read(Module(52), previous);
+
+        Assert.True(home.MenuSeen);
+        Assert.Equal(LoadingScreenKind.Loading, boot.Screen);
+        Assert.False(boot.MenuSeen);
+        Assert.Null(boot.MapLoading);
+    }
+
+    private static ClientModule Module(int pid) => new(pid, ModuleBase, ModuleSize, "2.57.0.98304");
 
     private static byte[] Site(long siteRva, long firstGlobal, long secondGlobal)
     {
@@ -202,7 +263,7 @@ public class LoadingScreenMemoryTests
         return b;
     }
 
-    private sealed class FakeClient
+    private sealed class FakeClient : IProcessMemory
     {
         private readonly Dictionary<long, byte> bytes = new();
 
@@ -234,19 +295,31 @@ public class LoadingScreenMemoryTests
 
         public void ShowScreen(bool loading)
         {
-            WritePointer(State + LoadingScreenMemory.ScreenOffset, Screen);
+            WritePointer(State + LoadingScreenLayout.Default.ScreenOffset, Screen);
             Write(
-                Screen + LoadingScreenMemory.FlagsOffset,
+                Screen + LoadingScreenLayout.Default.FlagsOffset,
                 new byte[] { loading ? (byte)123 : (byte)122 }
             );
         }
 
-        public void EnterMatch() => WritePointer(State + LoadingScreenMemory.ScreenOffset, 0);
+        /// <summary>The screen object where <paramref name="layout"/> puts it; only its bit set.</summary>
+        public void ShowScreen(bool loading, LoadingScreenLayout layout)
+        {
+            WritePointer(State + layout.ScreenOffset, Screen);
+            byte others = (byte)~(1 << layout.LoadingBit);
+            Write(
+                Screen + layout.FlagsOffset,
+                new byte[] { loading ? (byte)(1 << layout.LoadingBit) : others }
+            );
+        }
+
+        public void EnterMatch() =>
+            WritePointer(State + LoadingScreenLayout.Default.ScreenOffset, 0);
 
         public void WritePointer(long address, long value) =>
             Write(address, BitConverter.GetBytes(value));
 
-        public bool Read(long address, byte[] buffer)
+        public bool TryRead(long address, Span<byte> buffer)
         {
             for (int i = 0; i < buffer.Length; i++)
             {

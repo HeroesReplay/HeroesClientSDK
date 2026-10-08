@@ -97,23 +97,34 @@ foreach (Readers reader in readers.Values)
 
 return 0;
 
+/// <summary>
+/// The three readers of one client process, sharing one read-only attachment
+/// (<see cref="HeroesClientProcess"/>), attached again while it is not ok (a client still starting).
+/// </summary>
 internal sealed class Readers : IDisposable
 {
-    private readonly ClientScreenMemory screens = new();
-    private readonly LoadingScreenMemory loading = new();
-    private readonly StableMatchClock clock = new();
+    private readonly ClientScreen screens = new();
+    private readonly LoadingScreen loading = new();
+    private readonly MatchClock clock = new();
+    private HeroesClientProcess attached;
 
     public string Describe(Process client, HeroesClientVersion expected)
     {
-        ClientScreenSample screen = screens.Read(client, expected);
-        LoadingScreenSample legacy = loading.Read(client);
-        StableClockSample time = clock.Read(client);
+        if (attached is not { Ok: true })
+        {
+            attached?.Dispose();
+            attached = HeroesClientProcess.Attach(client);
+        }
+
+        ClientScreenSample screen = screens.Read(attached, expected);
+        LoadingScreenSample legacy = loading.Read(attached, expected);
+        MatchClockSample time = clock.Read(attached, expected);
         string shown = screen.Shown.Count == 0 ? "-" : string.Join(",", screen.Shown);
-        string clockText = time.Ok
-            ? TimeSpan.FromSeconds(time.Seconds).ToString(@"mm\:ss", CultureInfo.InvariantCulture)
+        string clockText = time.Time is TimeSpan at
+            ? at.ToString(@"mm\:ss", CultureInfo.InvariantCulture)
             : time.Reason;
         string mismatch = screen.VersionMismatch ? $" (expected {expected})" : string.Empty;
-        return $"{screen.ClientVersion?.ToString() ?? "?"}{mismatch} screen {screen.Screen} ({screen.Reason}) shown [{shown}] signed-in {Show(screen.SignedIn)} | loading-screen {legacy.Screen} ({legacy.Reason}, menu seen {legacy.MenuSeen}) | clock {clockText}";
+        return $"{attached.DetectedVersion?.ToString() ?? "?"}{mismatch} screen {screen.Screen} ({screen.Reason}) shown [{shown}] signed-in {Show(screen.SignedIn)} | loading-screen {legacy.Screen} ({legacy.Reason}, menu seen {legacy.MenuSeen}) | clock {clockText}";
     }
 
     private static string Show(bool? value) => value?.ToString() ?? "unknown";
@@ -123,5 +134,6 @@ internal sealed class Readers : IDisposable
         screens.Dispose();
         loading.Dispose();
         clock.Dispose();
+        attached?.Dispose();
     }
 }

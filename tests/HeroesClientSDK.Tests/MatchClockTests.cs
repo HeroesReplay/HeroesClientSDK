@@ -6,7 +6,7 @@ using Xunit;
 namespace HeroesClientSDK.Tests;
 
 [Trait(TestCategories.Category, TestCategories.Unit)]
-public class StableMatchClockTests
+public class MatchClockTests
 {
     private const long ModuleBase = 0x140000000L;
     private const long SectionRva = 0x1000;
@@ -21,17 +21,17 @@ public class StableMatchClockTests
     public void Read_Non98025Version_UsesPatternPath()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(11, SmallModule, "2.55.17.97771");
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(11, SmallModule, "2.55.17.97771");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 12);
 
-        StableClockSample first = clock.Read(module, memory.Read);
+        MatchClockSample first = clock.Read(module, memory);
 
         Assert.False(first.Ok);
         Assert.False(clock.IsLocked);
         Assert.Equal("confirming", first.Reason);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 13);
-        StableClockSample locked = clock.Read(module, memory.Read);
+        MatchClockSample locked = clock.Read(module, memory);
 
         Assert.True(locked.Ok);
         Assert.True(clock.IsLocked);
@@ -46,15 +46,15 @@ public class StableMatchClockTests
     public void Read_Build98025_PrefersAgreedPatternOverFixedRvas()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(12, LargeModule, MatchTickClock.SupportedBuild);
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(12, LargeModule, MatchTickClock.SupportedBuild);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 12);
         memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 50);
 
-        Assert.False(clock.Read(module, memory.Read).Ok);
+        Assert.False(clock.Read(module, memory).Ok);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 13);
         memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 51);
-        StableClockSample locked = clock.Read(module, memory.Read);
+        MatchClockSample locked = clock.Read(module, memory);
 
         Assert.True(locked.Ok);
         Assert.Equal(13, locked.Seconds, precision: 2);
@@ -66,11 +66,11 @@ public class StableMatchClockTests
     public void Read_FixedRva_IsValidatedBeforeLock()
     {
         MappedModule memory = MappedModule.Empty();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(13, LargeModule, MatchTickClock.SupportedBuild);
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(13, LargeModule, MatchTickClock.SupportedBuild);
         memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 15);
 
-        StableClockSample first = clock.Read(module, memory.Read);
+        MatchClockSample first = clock.Read(module, memory);
 
         Assert.False(first.Ok);
         Assert.False(clock.IsLocked);
@@ -81,7 +81,7 @@ public class StableMatchClockTests
         Assert.True(memory.FixedTickReads > 0);
         int scans = memory.WideReads;
         memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 16);
-        StableClockSample locked = clock.Read(module, memory.Read);
+        MatchClockSample locked = clock.Read(module, memory);
 
         Assert.True(locked.Ok);
         Assert.True(clock.IsLocked);
@@ -93,13 +93,13 @@ public class StableMatchClockTests
     public void Read_FixedRva_OutsideModule_DoesNotLock()
     {
         MappedModule memory = MappedModule.Empty();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(14, SmallModule, MatchTickClock.SupportedBuild);
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(14, SmallModule, MatchTickClock.SupportedBuild);
         memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 15);
-        StableClockSample first = clock.Read(module, memory.Read);
+        MatchClockSample first = clock.Read(module, memory);
         int scans = memory.WideReads;
         memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 16);
-        StableClockSample second = clock.Read(module, memory.Read);
+        MatchClockSample second = clock.Read(module, memory);
 
         Assert.False(first.Ok);
         Assert.False(second.Ok);
@@ -115,13 +115,13 @@ public class StableMatchClockTests
     public void Read_IncoherentSample_DoesNotLock()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(15, SmallModule, "2.55.17.97771");
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(15, SmallModule, "2.55.17.97771");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 30);
-        StableClockSample first = clock.Read(module, memory.Read);
+        MatchClockSample first = clock.Read(module, memory);
         int scans = memory.WideReads;
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 10);
-        StableClockSample second = clock.Read(module, memory.Read);
+        MatchClockSample second = clock.Read(module, memory);
 
         Assert.False(first.Ok);
         Assert.False(second.Ok);
@@ -135,13 +135,13 @@ public class StableMatchClockTests
     public void Read_InvalidSample_DoesNotLock()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(16, SmallModule, "2.55.17.97771");
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(16, SmallModule, "2.55.17.97771");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 12);
         memory.SetSingle(PatternSpeedRva, float.NaN);
-        StableClockSample first = clock.Read(module, memory.Read);
+        MatchClockSample first = clock.Read(module, memory);
         int scans = memory.WideReads;
-        StableClockSample second = clock.Read(module, memory.Read);
+        MatchClockSample second = clock.Read(module, memory);
 
         Assert.False(first.Ok);
         Assert.False(second.Ok);
@@ -156,17 +156,17 @@ public class StableMatchClockTests
     public void Read_CachedFingerprint_DoesNotScanAgain()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(17, SmallModule, "2.55.17.97771");
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(17, SmallModule, "2.55.17.97771");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 20);
-        Assert.False(clock.Read(module, memory.Read).Ok);
+        Assert.False(clock.Read(module, memory).Ok);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 21);
-        StableClockSample locked = clock.Read(module, memory.Read);
+        MatchClockSample locked = clock.Read(module, memory);
         Assert.True(locked.Ok);
         int scans = memory.WideReads;
 
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 22);
-        StableClockSample again = clock.Read(module, memory.Read);
+        MatchClockSample again = clock.Read(module, memory);
 
         Assert.True(again.Ok);
         Assert.True(clock.IsLocked);
@@ -178,11 +178,11 @@ public class StableMatchClockTests
     public void Read_FailedDiscovery_DoesNotScanAgain()
     {
         MappedModule memory = MappedModule.Empty();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(18, SmallModule, "2.55.17.97771");
-        StableClockSample first = clock.Read(module, memory.Read);
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(18, SmallModule, "2.55.17.97771");
+        MatchClockSample first = clock.Read(module, memory);
         int scans = memory.WideReads;
-        StableClockSample second = clock.Read(module, memory.Read);
+        MatchClockSample second = clock.Read(module, memory);
 
         Assert.False(first.Ok);
         Assert.False(second.Ok);
@@ -197,17 +197,17 @@ public class StableMatchClockTests
     public void Read_ProcessChange_ResetsDiscovery()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule firstProcess = Module(19, SmallModule, "2.55.17.97771");
+        using MatchClock clock = new MatchClock();
+        ClientModule firstProcess = Module(19, SmallModule, "2.55.17.97771");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 20);
-        Assert.False(clock.Read(firstProcess, memory.Read).Ok);
+        Assert.False(clock.Read(firstProcess, memory).Ok);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 21);
-        Assert.True(clock.Read(firstProcess, memory.Read).Ok);
+        Assert.True(clock.Read(firstProcess, memory).Ok);
         Assert.True(clock.IsLocked);
         int scans = memory.WideReads;
 
-        StableClockModule nextProcess = Module(20, SmallModule, "2.55.17.97771");
-        StableClockSample restarted = clock.Read(nextProcess, memory.Read);
+        ClientModule nextProcess = Module(20, SmallModule, "2.55.17.97771");
+        MatchClockSample restarted = clock.Read(nextProcess, memory);
 
         Assert.False(restarted.Ok);
         Assert.False(clock.IsLocked);
@@ -220,20 +220,19 @@ public class StableMatchClockTests
         // 2026-10-02: after a 24 minute match, every read of the next replay was "stalled"
         // because the previous match's last second stayed the baseline.
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 2, 19, 0, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(21, SmallModule, "2.57.0.98304");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(21, SmallModule, "2.57.0.98304");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1440);
-        clock.Read(module, memory.Read);
+        clock.Read(module, memory);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1441);
-        Assert.True(clock.Read(module, memory.Read).Ok);
+        Assert.True(clock.Read(module, memory).Ok);
 
         for (int second = 10; second <= 30; second++)
         {
             now = now.AddSeconds(1);
             memory.SetSeconds(PatternTickRva, PatternSpeedRva, second);
-            StableClockSample sample = clock.Read(module, memory.Read);
+            MatchClockSample sample = clock.Read(module, memory);
             Assert.True(sample.Ok, $"second {second}: {sample.Reason}");
         }
     }
@@ -242,20 +241,19 @@ public class StableMatchClockTests
     public void BeginMatch_ForgetsTheStallBaselineButKeepsTheLock()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 2, 19, 0, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(22, SmallModule, "2.57.0.98304");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(22, SmallModule, "2.57.0.98304");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 600);
-        clock.Read(module, memory.Read);
+        clock.Read(module, memory);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 601);
-        Assert.True(clock.Read(module, memory.Read).Ok);
+        Assert.True(clock.Read(module, memory).Ok);
 
         clock.BeginMatch();
         now = now.AddSeconds(30);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 599);
 
-        Assert.True(clock.Read(module, memory.Read).Ok);
+        Assert.True(clock.Read(module, memory).Ok);
         Assert.True(clock.IsLocked);
     }
 
@@ -264,12 +262,12 @@ public class StableMatchClockTests
     {
         TimeSpan at = TimeSpan.FromSeconds(42);
 
-        Assert.True(StableMatchClock.IsRunning(at, at + TimeSpan.FromMilliseconds(250)));
-        Assert.False(StableMatchClock.IsRunning(at, at));
-        Assert.False(StableMatchClock.IsRunning(at, at - TimeSpan.FromSeconds(1)));
-        Assert.False(StableMatchClock.IsRunning(null, at));
-        Assert.False(StableMatchClock.IsRunning(at, null));
-        Assert.False(StableMatchClock.IsRunning(null, null));
+        Assert.True(MatchClock.IsRunning(at, at + TimeSpan.FromMilliseconds(250)));
+        Assert.False(MatchClock.IsRunning(at, at));
+        Assert.False(MatchClock.IsRunning(at, at - TimeSpan.FromSeconds(1)));
+        Assert.False(MatchClock.IsRunning(null, at));
+        Assert.False(MatchClock.IsRunning(at, null));
+        Assert.False(MatchClock.IsRunning(null, null));
     }
 
     [Fact]
@@ -278,25 +276,24 @@ public class StableMatchClockTests
         // The last match's clock can sit at its final second until the next one starts.
         // Each read is ok until the stall window passes, so one read must not start a match.
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 2, 19, 0, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(23, SmallModule, "2.57.0.98304");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(23, SmallModule, "2.57.0.98304");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1439);
-        clock.Read(module, memory.Read);
+        clock.Read(module, memory);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1440);
-        clock.Read(module, memory.Read);
+        clock.Read(module, memory);
 
         clock.BeginMatch();
         now = now.AddSeconds(1);
-        StableClockSample first = clock.Read(module, memory.Read);
+        MatchClockSample first = clock.Read(module, memory);
         now = now.AddMilliseconds(250);
-        StableClockSample second = clock.Read(module, memory.Read);
+        MatchClockSample second = clock.Read(module, memory);
 
         Assert.True(first.Ok);
         Assert.True(second.Ok);
         Assert.False(
-            StableMatchClock.IsRunning(
+            MatchClock.IsRunning(
                 TimeSpan.FromSeconds(first.Seconds),
                 TimeSpan.FromSeconds(second.Seconds)
             )
@@ -308,22 +305,21 @@ public class StableMatchClockTests
     {
         // The client's code is encrypted on disk. Read too early, it has no clock pattern yet.
         MappedModule memory = MappedModule.Empty();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 2, 22, 0, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(25, SmallModule, "2.57.0.98304");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(25, SmallModule, "2.57.0.98304");
 
-        Assert.Equal("unsupported-build", clock.Read(module, memory.Read).Reason);
+        Assert.Equal("unsupported-build", clock.Read(module, memory).Reason);
         memory.AddPattern();
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 30);
-        Assert.Equal("unsupported-build", clock.Read(module, memory.Read).Reason);
+        Assert.Equal("unsupported-build", clock.Read(module, memory).Reason);
 
         now = now.AddSeconds(11);
-        clock.Read(module, memory.Read);
+        clock.Read(module, memory);
         now = now.AddSeconds(1);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 31);
 
-        Assert.True(clock.Read(module, memory.Read).Ok);
+        Assert.True(clock.Read(module, memory).Ok);
         Assert.Equal(PatternTickRva, clock.CandidateTickRva);
     }
 
@@ -331,12 +327,12 @@ public class StableMatchClockTests
     public void Read_MenuZero_IsNotAMatchClock()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(24, SmallModule, "2.57.0.98304");
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(24, SmallModule, "2.57.0.98304");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 0);
 
-        Assert.Equal("near-zero", clock.Read(module, memory.Read).Reason);
-        Assert.Equal("near-zero", clock.Read(module, memory.Read).Reason);
+        Assert.Equal("near-zero", clock.Read(module, memory).Reason);
+        Assert.Equal("near-zero", clock.Read(module, memory).Reason);
     }
 
     [Fact]
@@ -345,47 +341,44 @@ public class StableMatchClockTests
         DateTimeOffset changed = new DateTimeOffset(2026, 9, 30, 17, 49, 39, TimeSpan.Zero);
         DateTimeOffset later = changed.AddSeconds(9);
 
-        Assert.False(StableMatchClock.SameCellIsStale(double.NaN, 339.6, changed, later));
-        Assert.False(StableMatchClock.SameCellIsStale(339.6, 339.6, default, later));
-        Assert.False(StableMatchClock.SameCellIsStale(339.6, 339.86, changed, later));
+        Assert.False(MatchClock.SameCellIsStale(double.NaN, 339.6, changed, later));
+        Assert.False(MatchClock.SameCellIsStale(339.6, 339.6, default, later));
+        Assert.False(MatchClock.SameCellIsStale(339.6, 339.86, changed, later));
         Assert.False(
-            StableMatchClock.SameCellIsStale(
+            MatchClock.SameCellIsStale(
                 339.6,
                 339.6,
                 changed,
                 changed.AddSeconds(8) - TimeSpan.FromMilliseconds(1)
             )
         );
-        Assert.True(StableMatchClock.SameCellIsStale(339.6, 339.6, changed, changed.AddSeconds(8)));
-        Assert.True(
-            StableMatchClock.SameCellIsStale(339.6, 339.85, changed, changed.AddSeconds(8))
-        );
+        Assert.True(MatchClock.SameCellIsStale(339.6, 339.6, changed, changed.AddSeconds(8)));
+        Assert.True(MatchClock.SameCellIsStale(339.6, 339.85, changed, changed.AddSeconds(8)));
     }
 
     [Fact]
     public void Read_LockedCellStopsMoving_ReportsStalledUntilItMoves()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new DateTimeOffset(2026, 9, 30, 17, 49, 39, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(21, SmallModule, "2.55.17.97771");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(21, SmallModule, "2.55.17.97771");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 339);
-        Assert.Equal("confirming", clock.Read(module, memory.Read).Reason);
+        Assert.Equal("confirming", clock.Read(module, memory).Reason);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 340);
-        StableClockSample locked = clock.Read(module, memory.Read);
+        MatchClockSample locked = clock.Read(module, memory);
         Assert.True(locked.Ok);
         Assert.Equal("ok", locked.Reason);
         Assert.True(clock.IsLocked);
         int scans = memory.WideReads;
 
         now = now.AddSeconds(7);
-        StableClockSample holding = clock.Read(module, memory.Read);
+        MatchClockSample holding = clock.Read(module, memory);
         Assert.True(holding.Ok);
         Assert.Equal("ok", holding.Reason);
 
         now = now.AddSeconds(1);
-        StableClockSample stalled = clock.Read(module, memory.Read);
+        MatchClockSample stalled = clock.Read(module, memory);
         Assert.False(stalled.Ok);
         Assert.Equal("stalled", stalled.Reason);
         Assert.Equal(340, stalled.Seconds, precision: 2);
@@ -393,7 +386,7 @@ public class StableMatchClockTests
         Assert.Equal(scans, memory.WideReads);
 
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 341);
-        StableClockSample moved = clock.Read(module, memory.Read);
+        MatchClockSample moved = clock.Read(module, memory);
         Assert.True(moved.Ok);
         Assert.Equal("ok", moved.Reason);
         Assert.Equal(341, moved.Seconds, precision: 2);
@@ -405,16 +398,15 @@ public class StableMatchClockTests
         // #249: the launch wait read once per pass, and a pass with OCR on a hung window took
         // 30 s. A fixed 8 s step made every pass "incoherent", so the clock never locked.
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 7, 13, 13, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(31, SmallModule, "2.57.0.98348");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(31, SmallModule, "2.57.0.98348");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 95);
-        Assert.Equal("confirming", clock.Read(module, memory.Read).Reason);
+        Assert.Equal("confirming", clock.Read(module, memory).Reason);
 
         now = now.AddSeconds(30);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 125);
-        StableClockSample later = clock.Read(module, memory.Read);
+        MatchClockSample later = clock.Read(module, memory);
 
         Assert.True(later.Ok, later.Reason);
         Assert.True(clock.IsLocked);
@@ -425,16 +417,15 @@ public class StableMatchClockTests
     public void Read_CellThatJumpsFasterThanWallTime_IsStillIncoherent()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 7, 13, 13, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(32, SmallModule, "2.57.0.98348");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(32, SmallModule, "2.57.0.98348");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 100);
-        clock.Read(module, memory.Read);
+        clock.Read(module, memory);
 
         now = now.AddSeconds(1);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 400);
-        StableClockSample jumped = clock.Read(module, memory.Read);
+        MatchClockSample jumped = clock.Read(module, memory);
 
         Assert.False(jumped.Ok);
         Assert.Equal("incoherent", jumped.Reason);
@@ -455,10 +446,7 @@ public class StableMatchClockTests
         bool expected
     )
     {
-        Assert.Equal(
-            expected,
-            StableMatchClock.CoherentStep(delta, TimeSpan.FromSeconds(wallSeconds))
-        );
+        Assert.Equal(expected, MatchClock.CoherentStep(delta, TimeSpan.FromSeconds(wallSeconds)));
     }
 
     [Fact]
@@ -467,10 +455,9 @@ public class StableMatchClockTests
         // #249: the last value read was the previous match's frozen 18:45. A relaunched client
         // can get the same pid and image base, so the start time is part of the process.
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 7, 13, 1, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        var before = new StableClockModule(
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        var before = new ClientModule(
             33,
             ModuleBase,
             SmallModule,
@@ -478,23 +465,23 @@ public class StableMatchClockTests
             now.AddMinutes(-20).Ticks
         );
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1124);
-        clock.Read(before, memory.Read);
+        clock.Read(before, memory);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1125);
-        Assert.True(clock.Read(before, memory.Read).Ok);
+        Assert.True(clock.Read(before, memory).Ok);
         Assert.True(clock.IsLocked);
         int scans = memory.WideReads;
 
         now = now.AddMinutes(12);
-        StableClockModule relaunched = before with { StartedAt = now.AddMinutes(-8).Ticks };
+        ClientModule relaunched = before with { StartedAt = now.AddMinutes(-8).Ticks };
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 95);
-        StableClockSample first = clock.Read(relaunched, memory.Read);
+        MatchClockSample first = clock.Read(relaunched, memory);
 
         Assert.False(clock.IsLocked);
         Assert.Equal("confirming", first.Reason);
         Assert.True(memory.WideReads > scans);
         now = now.AddSeconds(1);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 96);
-        StableClockSample locked = clock.Read(relaunched, memory.Read);
+        MatchClockSample locked = clock.Read(relaunched, memory);
         Assert.True(locked.Ok, locked.Reason);
         Assert.Equal(96, locked.Seconds, precision: 2);
     }
@@ -503,16 +490,15 @@ public class StableMatchClockTests
     public async Task ReadRunningAsync_ConfirmsAFreshCellInOneProbe()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 7, 13, 13, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(34, SmallModule, "2.57.0.98348");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(34, SmallModule, "2.57.0.98348");
         int seconds = 95;
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, seconds);
         int pauses = 0;
 
-        TimeSpan? running = await StableMatchClock.ReadRunningAsync(
-            () => clock.Read(module, memory.Read),
+        TimeSpan? running = await MatchClock.ReadRunningAsync(
+            () => clock.Read(module, memory),
             () =>
             {
                 pauses++;
@@ -530,13 +516,13 @@ public class StableMatchClockTests
     public async Task ReadRunningAsync_MenuZeroAnswersAtOnce()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
-        StableClockModule module = Module(35, SmallModule, "2.57.0.98348");
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(35, SmallModule, "2.57.0.98348");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 0);
         int pauses = 0;
 
-        TimeSpan? running = await StableMatchClock.ReadRunningAsync(
-            () => clock.Read(module, memory.Read),
+        TimeSpan? running = await MatchClock.ReadRunningAsync(
+            () => clock.Read(module, memory),
             () =>
             {
                 pauses++;
@@ -552,17 +538,16 @@ public class StableMatchClockTests
     public async Task ReadRunningAsync_FrozenClockIsNotRunning()
     {
         MappedModule memory = MappedModule.WithPattern();
-        using StableMatchClock clock = new StableMatchClock();
         DateTimeOffset now = new(2026, 10, 7, 13, 1, 0, TimeSpan.Zero);
-        clock.UtcNow = () => now;
-        StableClockModule module = Module(36, SmallModule, "2.57.0.98348");
+        using MatchClock clock = new MatchClock(TestTime.Options(() => now));
+        ClientModule module = Module(36, SmallModule, "2.57.0.98348");
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1124);
-        clock.Read(module, memory.Read);
+        clock.Read(module, memory);
         memory.SetSeconds(PatternTickRva, PatternSpeedRva, 1125);
-        Assert.True(clock.Read(module, memory.Read).Ok);
+        Assert.True(clock.Read(module, memory).Ok);
 
-        TimeSpan? running = await StableMatchClock.ReadRunningAsync(
-            () => clock.Read(module, memory.Read),
+        TimeSpan? running = await MatchClock.ReadRunningAsync(
+            () => clock.Read(module, memory),
             () =>
             {
                 now = now.AddMilliseconds(250);
@@ -573,12 +558,180 @@ public class StableMatchClockTests
         Assert.Null(running);
     }
 
-    private static StableClockModule Module(int pid, long size, string version)
+    [Fact]
+    public void Read_NoVersionAnywhere_TakesTheGenericPathAndFindsThePattern()
     {
-        return new StableClockModule(pid, ModuleBase, size, version);
+        MappedModule memory = MappedModule.WithPattern();
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(40, LargeModule, null);
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 12);
+        memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 50);
+
+        Assert.Equal("confirming", clock.Read(module, memory).Reason);
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 13);
+        MatchClockSample locked = clock.Read(module, memory);
+
+        Assert.True(locked.Ok);
+        Assert.Null(locked.ClientVersion);
+        Assert.False(locked.VersionMismatch);
+        Assert.Equal(TimeSpan.FromSeconds(13), locked.Time);
+        Assert.Equal(PatternTickRva, clock.CandidateTickRva);
     }
 
-    private sealed class MappedModule
+    [Fact]
+    public void Read_NoPatternAndNoProfile_IsUnsupportedNotAnException()
+    {
+        MappedModule memory = MappedModule.Empty();
+        using MatchClock clock = new MatchClock();
+        memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 15);
+
+        MatchClockSample sample = clock.Read(Module(41, LargeModule, "2.99.0.123456"), memory);
+
+        Assert.False(sample.Ok);
+        Assert.Equal("unsupported-build", sample.Reason);
+        Assert.Null(sample.Time);
+        Assert.Equal(0, memory.FixedTickReads);
+    }
+
+    [Fact]
+    public void Read_APassedVersionThatDiffers_IsReportedAndReadingContinues()
+    {
+        MappedModule memory = MappedModule.WithPattern();
+        using MatchClock clock = new MatchClock();
+        ClientModule module = Module(42, SmallModule, "2.57.0.98348");
+        var expected = new HeroesClientVersion(2, 57, 0, 98304);
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 20);
+
+        MatchClockSample first = clock.Read(module, memory, expected);
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 21);
+        MatchClockSample locked = clock.Read(module, memory, expected);
+        MatchClockSample same = clock.Read(
+            module,
+            memory,
+            new HeroesClientVersion(2, 57, 0, 98348)
+        );
+
+        Assert.True(first.VersionMismatch);
+        Assert.Equal("confirming", first.Reason);
+        Assert.True(locked.Ok);
+        Assert.True(locked.VersionMismatch);
+        Assert.Equal(new HeroesClientVersion(2, 57, 0, 98348), locked.ClientVersion);
+        Assert.True(same.Ok);
+        Assert.False(same.VersionMismatch);
+    }
+
+    [Fact]
+    public void Read_ABuildProfileWithFixedAddresses_IsTriedAfterThePattern()
+    {
+        // A registry entry, not new code, gives a build its fixed addresses.
+        BuildProfileRegistry profiles = BuildProfileRegistry.Default.WithBuild(
+            new HeroesClientVersion(2, 57, 0, 98348),
+            new BuildProfile
+            {
+                Name = "test",
+                FixedClock = new MatchClockAddresses(PatternTickRva, PatternSpeedRva),
+            }
+        );
+        MappedModule memory = MappedModule.Empty();
+        using MatchClock clock = new MatchClock(new HeroesClientOptions { Profiles = profiles });
+        ClientModule module = Module(43, SmallModule, "2.57.0.98348");
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 30);
+
+        Assert.Equal("confirming", clock.Read(module, memory).Reason);
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 31);
+
+        Assert.True(clock.Read(module, memory).Ok);
+        Assert.Equal(PatternTickRva, clock.CandidateTickRva);
+    }
+
+    [Fact]
+    public void Read_ThePassedVersionPicksTheProfileOnlyWhenTheExeHasNone()
+    {
+        var build98025 = new HeroesClientVersion(2, 55, 17, 98025);
+        MappedModule memory = MappedModule.Empty();
+        memory.SetSeconds(MatchTickClock.MatchTickRva, MatchTickClock.GameSpeedFactorRva, 15);
+        using MatchClock running = new MatchClock();
+        using MatchClock unversioned = new MatchClock();
+
+        // The running exe is another build: its own (generic) profile wins over the passed one.
+        MatchClockSample other = running.Read(
+            Module(44, LargeModule, "2.57.0.98348"),
+            memory,
+            build98025
+        );
+        // The exe has no version: the passed version picks the 98025 profile.
+        MatchClockSample fallback = unversioned.Read(
+            Module(45, LargeModule, null),
+            memory,
+            build98025
+        );
+
+        Assert.Equal("unsupported-build", other.Reason);
+        Assert.True(other.VersionMismatch);
+        Assert.Equal("confirming", fallback.Reason);
+        Assert.False(fallback.VersionMismatch);
+        Assert.Equal(MatchTickClock.MatchTickRva, unversioned.CandidateTickRva);
+    }
+
+    [Fact]
+    public void Read_TwoClientsAtOnce_EachClockKeepsItsOwn()
+    {
+        MappedModule current = MappedModule.WithPattern();
+        MappedModule previous = MappedModule.WithPattern();
+        using MatchClock first = new MatchClock();
+        using MatchClock second = new MatchClock();
+        ClientModule currentModule = Module(46, SmallModule, "2.57.0.98348");
+        ClientModule previousModule = Module(47, SmallModule, "2.57.0.98304");
+
+        current.SetSeconds(PatternTickRva, PatternSpeedRva, 100);
+        previous.SetSeconds(PatternTickRva, PatternSpeedRva, 600);
+        first.Read(currentModule, current);
+        second.Read(previousModule, previous, new HeroesClientVersion(2, 57, 0, 98304));
+        current.SetSeconds(PatternTickRva, PatternSpeedRva, 101);
+        previous.SetSeconds(PatternTickRva, PatternSpeedRva, 601);
+        MatchClockSample a = first.Read(currentModule, current);
+        MatchClockSample b = second.Read(
+            previousModule,
+            previous,
+            new HeroesClientVersion(2, 57, 0, 98304)
+        );
+
+        Assert.True(a.Ok);
+        Assert.True(b.Ok);
+        Assert.Equal(101, a.Seconds, precision: 2);
+        Assert.Equal(601, b.Seconds, precision: 2);
+        Assert.Equal(98348, a.ClientVersion.Build);
+        Assert.Equal(98304, b.ClientVersion.Build);
+        Assert.False(b.VersionMismatch);
+    }
+
+    [Fact]
+    public void Read_AClientFromMemory_ReadsLikeAProcess()
+    {
+        MappedModule memory = MappedModule.WithPattern();
+        using MatchClock clock = new MatchClock();
+        using HeroesClientProcess client = HeroesClientProcess.FromMemory(
+            memory,
+            Module(48, SmallModule, "2.57.0.98348")
+        );
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 40);
+        clock.Read(client);
+        memory.SetSeconds(PatternTickRva, PatternSpeedRva, 41);
+
+        MatchClockSample sample = clock.Read(client);
+
+        Assert.True(client.Ok);
+        Assert.Equal(new HeroesClientVersion(2, 57, 0, 98348), client.DetectedVersion);
+        Assert.True(sample.Ok);
+        Assert.Equal(41, sample.Seconds, precision: 2);
+    }
+
+    private static ClientModule Module(int pid, long size, string version)
+    {
+        return new ClientModule(pid, ModuleBase, size, version);
+    }
+
+    private sealed class MappedModule : IProcessMemory
     {
         private readonly Dictionary<long, byte> bytes = new Dictionary<long, byte>();
 
@@ -628,9 +781,9 @@ public class StableMatchClockTests
             Write(rva, BitConverter.GetBytes(value));
         }
 
-        public bool Read(long address, byte[] buffer)
+        public bool TryRead(long address, Span<byte> buffer)
         {
-            if (address <= 0 || buffer == null || buffer.Length == 0)
+            if (address <= 0 || buffer.IsEmpty)
             {
                 return false;
             }

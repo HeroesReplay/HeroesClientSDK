@@ -15,13 +15,14 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern IntPtr OpenProcess(int access, bool inherit, int processId);
 
+    /// <summary><c>nSize</c> and <c>lpNumberOfBytesRead</c> are <c>SIZE_T</c>.</summary>
     [DllImport("kernel32.dll", SetLastError = true)]
     public static extern bool ReadProcessMemory(
         IntPtr process,
         IntPtr address,
-        byte[] buffer,
-        int size,
-        out int read
+        ref byte buffer,
+        nint size,
+        out nint read
     );
 
     [DllImport("kernel32.dll", SetLastError = true)]
