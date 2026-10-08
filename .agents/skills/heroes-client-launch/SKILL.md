@@ -18,14 +18,20 @@ description: >
 
 The launch logic lives in HeroesReplay (`src/HeroesReplay.Core/GameClient`, AGENTS.md "Current patch
 and previous patch"). This skill is the reference for it, plus what a read-only look at
-ASA-SERVER's install showed on 2026-10-08. The SDK only reads clients that are already running.
+ASA-SERVER's install showed on 2026-10-08. The SDK itself only reads clients that are already running.
 
 ## Rules
 
-- **Look, don't touch.** From an SDK or RE task, never start, close, focus or click a client, and
-  never click Play, Update or Allow in Battle.net or Windows. Clients are started by HeroesReplay's
-  spectator or by the owner. ASA-SERVER's live proofs own the client (`C:\heroesreplay\asa-live.lock`).
-  Never touch the stream PC (DESKTOP-8SJEK72).
+- **Launch only for live verification or RE, under the lock** (AGENTS.md rule 5). Launching clients
+  and reading them with the SDK is the acceptance bar for a new read. An SDK or RE task may start a
+  client only on ASA-SERVER, only while it holds `C:\heroesreplay\asa-live.lock` (taken only while
+  `C:\heroesreplay\asa-release-pending` does not exist), and only the way HeroesReplay starts one:
+  Battle.net `--exec="launch Hero"` (SSO) for the current patch, HeroesSwitcher with a `.StormReplay`
+  for a previous patch (or without SSO to show the login form). Read it read-only, close what you
+  started with `heroesreplay services stop`, then release the lock. Otherwise, work with a client the
+  spectator or the owner started.
+- **Never click Play, Update or Allow** in Battle.net, the client or Windows, and never type
+  credentials. Never touch the stream PC (DESKTOP-8SJEK72).
 - **No credentials, no account identifiers.** Never type credentials. Don't open Battle.net's account
   files (`%APPDATA%\Battle.net\*.config`, `%LOCALAPPDATA%\Battle.net\`). Never copy into a doc, test
   or commit: the `Accounts\<account id>\<toon handle>` folder names, `accountCountry` and

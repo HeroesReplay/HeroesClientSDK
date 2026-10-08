@@ -39,11 +39,22 @@ SHA-256. The usage, the install, the build and the release steps are in [README.
    under `C:\heroesreplay\re\` (the `.gitignore` also ignores `re/`, `*.gpr`, `*.rep/`, `*.dmp`).
    A test keeps only the few bytes it needs, as hex in the test source, with the build and date in a
    comment. No `.nupkg` is committed either.
-5. **Don't drive the game.** Never start, close, click or update a Heroes client or Battle.net from
-   an SDK task. Work with a client that HeroesReplay or the owner already started. On ASA-SERVER the
-   live proofs own the client (`C:\heroesreplay\asa-live.lock`). Never touch the stream PC
-   (DESKTOP-8SJEK72). Read-only memory images of a running client are approved (skill
-   `heroes-client-re`). Don't decrypt the exe file offline.
+5. **Launch a client only for live verification or RE, under the lock.** Launching clients and
+   reading them with the SDK is the owner's acceptance bar for a new read, so an SDK task may start
+   a Heroes client, but only when all of these hold:
+   - it is on ASA-SERVER (the dev box), never the stream PC (DESKTOP-8SJEK72);
+   - it holds `C:\heroesreplay\asa-live.lock`, taken only while `C:\heroesreplay\asa-release-pending`
+     does not exist (a release or e2e agent has priority), and it releases the lock after
+     `heroesreplay services stop` shows no Heroes or heroesreplay process left;
+   - it starts the client the way HeroesReplay's AGENTS.md ("Current patch and previous patch") does:
+     Battle.net SSO (`--exec="launch Hero"`) for the current patch, HeroesSwitcher with a
+     `.StormReplay` for a previous patch (or without SSO to show the login form);
+   - it never types credentials and never clicks Update, Play or Allow;
+   - it reads the client read-only (rule 1).
+
+   Otherwise, work with a client that HeroesReplay or the owner already started. Read-only memory
+   images of a running client are approved (skill `heroes-client-re`). Don't decrypt the exe file
+   offline.
 6. **No credentials or account identifiers** in code, tests, docs or commits (skill
    `heroes-client-launch`).
 
