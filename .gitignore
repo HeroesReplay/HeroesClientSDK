@@ -9,3 +9,10 @@ TestResults/
 *.nupkg
 *.snupkg
 *.binlog
+
+# Reverse engineering output stays outside git (.agents/skills/heroes-client-re): Ghidra projects,
+# memory images and anything from the Blizzard client.
+re/
+*.gpr
+*.rep/
+*.dmp

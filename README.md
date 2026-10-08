@@ -137,6 +137,20 @@ git tag v0.1.1
 git push origin v0.1.1
 ```
 
+## Reverse engineering
+
+New reads come from reverse engineering the client. The agent skills in `.agents/skills/` cover
+it:
+
+- `ghidra`: Ghidra 12.1 headless, per-build projects, and the GhidraScripts in
+  `.agents/skills/ghidra/scripts/`.
+- `heroes-client-re`: the workflow for a new read. It covers a read-only memory image of a
+  running client, finding and confirming a global, a pattern that holds across builds, tests,
+  and the rules.
+
+The client exe is encrypted on disk, so code work uses a memory image. Nothing from the client
+(exes, images, Ghidra projects) is committed.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
