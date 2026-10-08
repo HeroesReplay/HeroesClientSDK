@@ -188,7 +188,7 @@ Don't click Update or Play to fetch anything. The owner handles patches (HeroesR
 | --- | --- | --- |
 | `Versions\Base<build>` exists but has no exe | install folder | Not installed: reclaimed, never served, or not arrived yet |
 | The exe appears in `Versions\Base<build>` | install folder | An older-build download has arrived; the previous-patch rules apply from here |
-| "DOWNLOADING — All data files must be fully downloaded to load this version of the game. Calculating... CANCEL" | client window (`ClientScreenText.GameDataDownload` = "must be fully downloaded") | The client is fetching data, seen on the newest exe during a handoff. Memory: `ClientScreenMemory` reads `NoScreen` (mask 0), with no `CDownloadPanel` (#292) |
+| "DOWNLOADING — All data files must be fully downloaded to load this version of the game. Calculating... CANCEL" | client window (`ClientScreenText.GameDataDownload` = "must be fully downloaded") | The client is fetching data, seen on the newest exe during a handoff. Memory: a shown top-level `CProgressBarDialog` with no screen bit, launch state 6, then 8 before the exe exits. `ClientScreen` reads `Download` (0.4.1, read live on 98348 on 2026-10-08) |
 | "Preparing game data" | a native Win32 window (`DownloadProgressMessage` in `.rsrc`) | Startup of the replay's own client. Leave it |
 | A blank full-size window on the switcher's process | client window | Still starting. Leave it until `ColdBootLimit` |
 | `HeroesData\data\data.NNN` growing, `*.idx` rewritten, a new `shmem` time | CASC | Data written. This also happens on an ordinary start, so it is a hint, not proof |
@@ -262,7 +262,7 @@ no rule covers the exe. Spectate itself runs unelevated and only warns. Never cl
 | Dialog | Text (OCR today, `ClientScreenText`) | Memory lead (#292) | HeroesReplay does |
 | --- | --- | --- | --- |
 | Version mismatch | "version mismatch" | `@UI/GameLaunchDataBuildNumMismatch`, launch result code 15 | Close, defer (`VersionMismatch`); one launcher restart, then an operator (`LauncherRecoveryPlan`) |
-| Version not available | "version of Heroes ... not available" | Top-level `CStandardDialog`; code 10, 13 or 14 (not confirmed live yet) | Close, defer `BuildNotInstalled`, hold the build |
+| Version not available | "version of Heroes ... not available" | Top-level `CStandardDialog`; launch result 23 `GameLaunchUnsupportedNoData`, read live on 2026-10-08 (`ClientScreenKind.Dialog`, 0.4.1) | Close, defer `BuildNotInstalled`, hold the build |
 | Region unavailable | "region" + "unavailable" | Not reproduced yet | Close, defer (`RegionUnavailable`) |
 | Login form | "password" + "email" or "log in" | `ScreenLoginUnified` in the mask (`0x60C1`). The AUTHENTICATION "Connecting..." panel is a visible `CLoginDialog` | Current patch: close and ask Battle.net once more. On the handoff exe: ignore |
 | Battle.net disconnected | `BattleNetDisconnect` phrases | | Outage handling |
