@@ -68,6 +68,30 @@ public class BuildProfileRegistryTests
     }
 
     [Fact]
+    public void FrameTreeLayout_DefaultIsTheMeasuredOne_InEveryDefaultProfile()
+    {
+        // 2.57.0.98304 and 2.57.0.98348: parent 0x50, flags 0x48 (bit 0), first child 0x40,
+        // node 0x18, next 0x20, IsA slot 0x240.
+        FrameTreeLayout layout = FrameTreeLayout.Default;
+
+        Assert.Equal(0x50, layout.ParentOffset);
+        Assert.Equal(0x48, layout.FlagsOffset);
+        Assert.Equal(0x40, layout.FirstChildOffset);
+        Assert.Equal(0x18, layout.NodeOffset);
+        Assert.Equal(0x20, layout.NextOffset);
+        Assert.Equal(0x240, layout.IsASlot);
+        Assert.Equal(0, layout.VisibleBit);
+        Assert.Same(layout, BuildProfileRegistry.Default.Resolve(Current).FrameTree);
+        Assert.Same(layout, BuildProfileRegistry.Default.Resolve(null).FrameTree);
+        Assert.Same(
+            layout,
+            BuildProfileRegistry
+                .Default.Resolve(new HeroesClientVersion(2, 55, 17, 98025))
+                .FrameTree
+        );
+    }
+
+    [Fact]
     public void LoadingScreenLayout_DefaultIsTheMeasuredOne()
     {
         Assert.Equal(0x218, LoadingScreenLayout.Default.ScreenOffset);

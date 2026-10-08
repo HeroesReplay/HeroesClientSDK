@@ -15,7 +15,7 @@ SHA-256. The usage, the install, the build and the release steps are in [README.
 | --- | --- |
 | `src/HeroesClientSDK` | The library (the package) |
 | `tests/HeroesClientSDK.Tests` | xUnit tests: recorded bytes and fake reads, never a live client |
-| `tools/HeroesClientSDK.Probe` | `heroes-client-probe`: prints what the SDK reads from every running client, read-only |
+| `tools/HeroesClientSDK.Probe` | `heroes-client-probe`: prints what the SDK reads from every running client, read-only; `--image <file>` checks every reader's discovery on a saved module image, offline |
 | `.agents/skills` | The agent skills below |
 
 ## Rules

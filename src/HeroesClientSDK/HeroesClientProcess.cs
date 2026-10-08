@@ -35,7 +35,8 @@ public sealed class HeroesClientProcess : IDisposable
     /// <summary>
     /// "ok", or why the process is not attached: "no-process" (null or exited), "open-failed"
     /// (Windows refused the read-only handle), or "no-module" (the main module cannot be read
-    /// yet, as on a client that has only just started).
+    /// yet, as on a client that has only just started). A saved image that cannot be served
+    /// (<see cref="FromImage"/>) is "no-image" or "bad-image".
     /// </summary>
     public string Reason { get; }
 
@@ -51,6 +52,12 @@ public sealed class HeroesClientProcess : IDisposable
     internal IProcessMemory Memory { get; }
 
     /// <summary>
+    /// The screen readers' code scans of this process: a <see cref="LoadingScreen"/> and a
+    /// <see cref="ClientScreen"/> that read this client walk its code once between them.
+    /// </summary>
+    internal ScreenScans ScreenScans { get; } = new();
+
+    /// <summary>
     /// Attaches to <paramref name="process"/> read-only. Never throws: a process that cannot be
     /// attached comes back with <see cref="Ok"/> false and a <see cref="Reason"/>.
     /// </summary>
@@ -62,6 +69,22 @@ public sealed class HeroesClientProcess : IDisposable
     /// </summary>
     public static HeroesClientProcess FromMemory(IProcessMemory memory, ClientModule module) =>
         new("ok", module, memory, null);
+
+    /// <summary>
+    /// A client served by a saved image of its main module: the file that the
+    /// <c>heroes-client-re</c> skill's <c>Save-ModuleImage.ps1</c> writes from a running client
+    /// (the decrypted code, laid out by RVA, with the runtime base as its image base). The exe file
+    /// itself cannot serve, because its code is encrypted on disk. Every reader's discovery runs
+    /// on it offline (<see cref="ClientDiscovery.Run"/>); state that lives on the heap does not
+    /// read. The build is the image's own <c>FileVersion</c>, or null. An image has no process: its
+    /// module reads as process 1, started when the file was written. Never throws: a missing or
+    /// unreadable file is "no-image", and a file that is not an x64 module image is "bad-image".
+    /// </summary>
+    public static HeroesClientProcess FromImage(string imagePath)
+    {
+        string reason = ModuleImage.TryLoad(imagePath, out ModuleImage image);
+        return reason == "ok" ? new("ok", image.Module, image, null) : Failed(reason);
+    }
 
     internal static HeroesClientProcess Attach(
         Process process,

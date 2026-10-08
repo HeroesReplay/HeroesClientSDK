@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 
 namespace HeroesClientSDK;
 
@@ -269,7 +270,11 @@ public sealed class ClientScreen : IDisposable
     private static readonly TimeSpan PanelWalkInterval = TimeSpan.FromSeconds(5);
 
     private readonly ProcessAttachment attachment = new();
+    private readonly BuildProfileRegistry profiles;
     private readonly TimeProvider time;
+    private readonly ScreenScans ownScans = new();
+    private ScreenScan lastScan;
+    private FrameTreeLayout frameLayout = FrameTreeLayout.Default;
     private int pid;
     private long startedAt;
     private long moduleBase;
@@ -281,7 +286,7 @@ public sealed class ClientScreen : IDisposable
     private List<string> names = new();
     private bool screenSeen;
     private bool menuSeen;
-    private readonly Panel awardsPanel = new("CEndOfGameAwardsPanel");
+    private readonly Panel awardsPanel = new(AwardsPanel);
     private readonly Dictionary<long, string> classes = new();
     private long panelTop;
     private DateTimeOffset nextPanelWalk;
@@ -293,13 +298,28 @@ public sealed class ClientScreen : IDisposable
     private List<string> launchKeys = new();
 
     /// <summary>
-    /// A reader with <paramref name="options"/>, or the defaults when null. The menu screens need
-    /// no per-build data: the offsets and the screen names come from the client itself.
+    /// A reader with <paramref name="options"/>, or the defaults when null. The menu root's
+    /// offsets and the screen names come from the client itself; the UI frame tree's layout comes
+    /// from the running build's profile (<see cref="BuildProfile.FrameTree"/>).
     /// </summary>
     public ClientScreen(HeroesClientOptions options = null)
     {
+        profiles = options?.Profiles ?? BuildProfileRegistry.Default;
         time = options?.TimeProvider ?? TimeProvider.System;
     }
+
+    /// <summary>
+    /// The frame classes this reader looks for by name: the awards panel, the loading screen's
+    /// map panel and the dialogs it tells apart.
+    /// </summary>
+    internal static IReadOnlyList<string> FrameClassNames =>
+        new[] { AwardsPanel, MapPanel, LoginDialog, DownloadDialog }
+            .Concat(MessageDialogs)
+            .ToArray();
+
+    internal string DiscoveryReason => reason;
+
+    internal FrameTreeLayout FrameLayout => frameLayout;
 
     internal long GlobalRva => globalRva;
 
@@ -358,9 +378,10 @@ public sealed class ClientScreen : IDisposable
         }
 
         nextPanelWalk = time.GetUtcNow() + PanelWalkInterval;
-        panelTop = FrameTree.Top(memory, root);
+        panelTop = FrameTree.Top(memory, frameLayout, root);
         (long frame, long vtable) = FrameTree.FindFirst(
             memory,
+            frameLayout,
             panelTop,
             candidate => ClassOf(memory, candidate) == awardsPanel.Name
         );
@@ -372,7 +393,7 @@ public sealed class ClientScreen : IDisposable
     {
         if (!classes.TryGetValue(vtable, out string name))
         {
-            name = FrameClass.Name(memory, vtable, moduleBase, moduleSize);
+            name = FrameClass.Name(memory, frameLayout, vtable, moduleBase, moduleSize);
             classes[vtable] = name;
         }
 
@@ -387,7 +408,7 @@ public sealed class ClientScreen : IDisposable
             return null;
         }
 
-        return FrameTree.Shown(memory, panel.Frame, panelTop);
+        return FrameTree.Shown(memory, frameLayout, panel.Frame, panelTop);
     }
 
     /// <summary>
@@ -419,13 +440,14 @@ public sealed class ClientScreen : IDisposable
             );
         }
 
-        return Read(client.Module, client.Memory, clientVersion);
+        return Read(client.Module, client.Memory, clientVersion, client.ScreenScans);
     }
 
     internal ClientScreenSample Read(
         ClientModule module,
         IProcessMemory memory,
-        HeroesClientVersion clientVersion = null
+        HeroesClientVersion clientVersion = null,
+        ScreenScans scans = null
     )
     {
         if (module.ProcessId <= 0 || module.BaseAddress <= 0 || module.Size <= 0 || memory == null)
@@ -436,7 +458,7 @@ public sealed class ClientScreen : IDisposable
         UseModule(module);
         if (!discovered || (!Ready && time.GetUtcNow() >= rediscoverAt))
         {
-            Discover(memory);
+            Discover(memory, module, clientVersion, scans ?? ownScans);
         }
 
         if (!Ready)
@@ -454,7 +476,7 @@ public sealed class ClientScreen : IDisposable
             return Sample(ClientScreenKind.Unknown, "no-state", clientVersion);
         }
 
-        long top = FrameTree.Top(memory, root);
+        long top = FrameTree.Top(memory, frameLayout, root);
         IReadOnlyList<string> dialogs = ShownDialogs(memory, top);
         (int? launchCode, string launchResult, int? launchState) = ReadLaunch(memory);
         ClientScreenSample Sampled(
@@ -616,6 +638,7 @@ public sealed class ClientScreen : IDisposable
         );
     }
 
+    private const string AwardsPanel = "CEndOfGameAwardsPanel";
     private const string LoginDialog = "CLoginDialog";
     private const string DownloadDialog = "CProgressBarDialog";
     private const string MapPanel = "CCustomLoadingPanel";
@@ -642,14 +665,14 @@ public sealed class ClientScreen : IDisposable
             return null;
         }
 
-        foreach ((long child, long vtable) in FrameTree.Children(memory, loadingFrame))
+        foreach ((long child, long vtable) in FrameTree.Children(memory, frameLayout, loadingFrame))
         {
             if (ClassOf(memory, vtable) == MapPanel)
             {
                 return top != 0
-                    ? FrameTree.Shown(memory, child, top)
-                    : FrameTree.Visible(memory, loadingFrame) == true
-                        && FrameTree.Visible(memory, child) == true;
+                    ? FrameTree.Shown(memory, frameLayout, child, top)
+                    : FrameTree.Visible(memory, frameLayout, loadingFrame) == true
+                        && FrameTree.Visible(memory, frameLayout, child) == true;
             }
         }
 
@@ -671,13 +694,13 @@ public sealed class ClientScreen : IDisposable
         }
 
         var shown = new List<string>();
-        foreach ((long child, long vtable) in FrameTree.Children(memory, top))
+        foreach ((long child, long vtable) in FrameTree.Children(memory, frameLayout, top))
         {
             string name = ClassOf(memory, vtable);
             if (
                 name != null
                 && name.EndsWith(DialogSuffix, StringComparison.Ordinal)
-                && FrameTree.Visible(memory, child) == true
+                && FrameTree.Visible(memory, frameLayout, child) == true
             )
             {
                 shown.Add(name);
@@ -848,49 +871,42 @@ public sealed class ClientScreen : IDisposable
         launchResultOffset = 0;
         launchStateOffset = 0;
         launchKeys = new List<string>();
+        frameLayout = FrameTreeLayout.Default;
+        lastScan = null;
     }
 
-    private void Discover(IProcessMemory memory)
+    /// <summary>
+    /// Finds the menu root, its offsets, the screen table and the game-launch manager in the
+    /// client's code scan, which this reader shares with a <see cref="LoadingScreen"/> that reads
+    /// the same <see cref="HeroesClientProcess"/>. The frame tree's layout follows the running
+    /// exe's build, or <paramref name="clientVersion"/> when the exe has none.
+    /// </summary>
+    private void Discover(
+        IProcessMemory memory,
+        ClientModule module,
+        HeroesClientVersion clientVersion,
+        ScreenScans scans
+    )
     {
         discovered = true;
-        rediscoverAt = time.GetUtcNow() + RediscoverAfter;
-        if (!ModuleScanner.TrySections(memory, moduleBase, moduleSize, out var sections))
+        DateTimeOffset now = time.GetUtcNow();
+        rediscoverAt = now + RediscoverAfter;
+        frameLayout =
+            profiles.Resolve(Version() ?? clientVersion).FrameTree ?? FrameTreeLayout.Default;
+        ScreenScan scan = scans.For(memory, module, lastScan, now);
+        lastScan = scan;
+        IReadOnlyList<ModuleSection> sections = scan.Sections;
+        if (sections == null)
         {
             reason = "read-failed";
             return;
         }
 
-        var globals = new List<long>();
-        var sites = new List<GlueScreenPattern.Offsets>();
-        var launchGlobals = new List<long>();
-        var resultOffsets = new List<int>();
-        var stateSites = new List<(long Global, int Offset)>();
-        int overlap = Math.Max(
-            Math.Max(LoadingScreenPattern.Width, GlueScreenPattern.Width),
-            GameLaunchPattern.CreatorWidth
-        );
-        foreach (ModuleSection section in sections)
-        {
-            if (!section.Executable)
-            {
-                continue;
-            }
-
-            ModuleScanner.Walk(
-                memory,
-                moduleBase,
-                section,
-                overlap,
-                (slice, rva) =>
-                {
-                    globals.AddRange(LoadingScreenPattern.Find(slice, rva));
-                    sites.AddRange(GlueScreenPattern.Find(slice));
-                    launchGlobals.AddRange(GameLaunchPattern.FindGlobals(slice, rva));
-                    resultOffsets.AddRange(GameLaunchPattern.FindResultOffsets(slice));
-                    stateSites.AddRange(GameLaunchPattern.FindStateOffsets(slice, rva));
-                }
-            );
-        }
+        List<long> globals = scan.ScreenGlobals;
+        List<GlueScreenPattern.Offsets> sites = scan.GlueSites;
+        List<long> launchGlobals = scan.LaunchGlobals;
+        List<int> resultOffsets = scan.ResultOffsets;
+        List<(long Global, int Offset)> stateSites = scan.StateSites;
 
         // Code that is still being unpacked has no sites yet; the next attempt reads it again.
         if (

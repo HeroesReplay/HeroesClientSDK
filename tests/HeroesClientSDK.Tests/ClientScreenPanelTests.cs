@@ -66,6 +66,70 @@ public class ClientScreenPanelTests
         Assert.Equal(ClientScreenKind.Home, sample.Screen);
     }
 
+    // A patch that moves the frame tree: parent, next sibling and IsA slot at new offsets.
+    private static readonly FrameTreeLayout Moved = new(
+        ParentOffset: 0x58,
+        NextOffset: 0x28,
+        IsASlot: 0x248
+    );
+
+    [Fact]
+    public void Read_AMovedFrameTree_ReadsWithItsBuildsProfile()
+    {
+        // HeroesClientSDK#12: the frame-tree layout is profile data, so a patch that moves it
+        // needs a registry entry, not a code change.
+        BuildProfileRegistry profiles = BuildProfileRegistry.Default.WithBuild(
+            new HeroesClientVersion(2, 57, 0, 98348),
+            new BuildProfile { Name = "moved", FrameTree = Moved }
+        );
+        var client = new FakeGlueClient(layout: Moved);
+        client.AddPanels();
+        using var memory = new ClientScreen(new HeroesClientOptions { Profiles = profiles });
+        using var unaware = new ClientScreen();
+        client.ShowScreens(HomeMask);
+        memory.Read(client.Module(74), client);
+        unaware.Read(client.Module(74), client);
+        client.TearDownMenus();
+        client.ShowAwards(true);
+
+        ClientScreenSample awards = memory.Read(client.Module(74), client);
+        ClientScreenSample notFound = unaware.Read(client.Module(74), client);
+
+        Assert.Equal(Moved, memory.FrameLayout);
+        Assert.Equal(ClientScreenKind.Awards, awards.Screen);
+        Assert.Equal(client.VtableOf("CEndOfGameAwardsPanel"), memory.AwardsVtable);
+        // With the 2.57 layout the moved tree does not read: never a wrong frame, only no panel.
+        Assert.Equal(FrameTreeLayout.Default, unaware.FrameLayout);
+        Assert.Equal(ClientScreenKind.Match, notFound.Screen);
+        Assert.Equal(0, unaware.AwardsVtable);
+    }
+
+    [Fact]
+    public void Read_TheFrameTreeLayoutFollowsTheRunningExe_APassedVersionOnlyWhenItHasNone()
+    {
+        BuildProfileRegistry profiles = BuildProfileRegistry.Default.WithBuild(
+            new HeroesClientVersion(2, 57, 0, 98348),
+            new BuildProfile { Name = "moved", FrameTree = Moved }
+        );
+        var options = new HeroesClientOptions { Profiles = profiles };
+        var current = new HeroesClientVersion(2, 57, 0, 98348);
+        var noVersion = new FakeGlueClient(fileVersion: null, layout: Moved);
+        var previous = new FakeGlueClient(fileVersion: "2.57.0.98304");
+        using var first = new ClientScreen(options);
+        using var second = new ClientScreen(options);
+
+        noVersion.ShowScreens(HomeMask);
+        previous.ShowScreens(HomeMask);
+        ClientScreenSample unversioned = first.Read(noVersion.Module(75), noVersion, current);
+        ClientScreenSample mismatch = second.Read(previous.Module(76), previous, current);
+
+        Assert.Equal(Moved, first.FrameLayout);
+        Assert.Equal(ClientScreenKind.Home, unversioned.Screen);
+        Assert.Equal(FrameTreeLayout.Default, second.FrameLayout);
+        Assert.True(mismatch.VersionMismatch);
+        Assert.Equal(ClientScreenKind.Home, mismatch.Screen);
+    }
+
     [Fact]
     public void FrameClass_FollowsRecordedIsAAndStaticTypeToTheClassName()
     {

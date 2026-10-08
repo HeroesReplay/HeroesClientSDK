@@ -28,6 +28,37 @@ public sealed record LoadingScreenLayout(
 }
 
 /// <summary>
+/// How the client's UI frames form one tree, which <see cref="ClientScreen"/> walks for the awards
+/// screen, the loading screen's map panel and the dialogs. Every frame keeps its parent at
+/// <see cref="ParentOffset"/>, its own visible bit (<see cref="VisibleBit"/>) in the byte at
+/// <see cref="FlagsOffset"/>, and its children as an intrusive list: the parent's
+/// <see cref="FirstChildOffset"/> points at the first child's list node (child +
+/// <see cref="NodeOffset"/>), each child's <see cref="NextOffset"/> points at the next node, and
+/// the list ends at a tagged pointer. A frame's class is named by the <c>IsA</c> function in its
+/// vtable slot at <see cref="IsASlot"/>. Measured on 2.57.0.98304 and 2.57.0.98348.
+/// </summary>
+/// <param name="ParentOffset">The parent frame's offset in a frame.</param>
+/// <param name="FlagsOffset">The flags byte's offset in a frame.</param>
+/// <param name="FirstChildOffset">The offset of the pointer to the first child's list node.</param>
+/// <param name="NodeOffset">The list node's offset in a child frame.</param>
+/// <param name="NextOffset">The offset of the pointer to the next sibling's list node.</param>
+/// <param name="IsASlot">The vtable offset of the frame class's <c>IsA(type)</c>.</param>
+/// <param name="VisibleBit">The bit of the flags byte that is set while the frame is visible.</param>
+public sealed record FrameTreeLayout(
+    long ParentOffset = 0x50,
+    long FlagsOffset = 0x48,
+    long FirstChildOffset = 0x40,
+    long NodeOffset = 0x18,
+    long NextOffset = 0x20,
+    long IsASlot = 0x240,
+    int VisibleBit = 0
+)
+{
+    /// <summary>The layout of every known build.</summary>
+    public static FrameTreeLayout Default { get; } = new();
+}
+
+/// <summary>
 /// Per-build data. The readers find everything by instruction pattern first; a profile adds what
 /// a pattern cannot give for that build. It is chosen by the running exe's build (exact build,
 /// then patch line, then <see cref="BuildProfileRegistry.Fallback"/>), never by a static setting.
@@ -48,6 +79,9 @@ public sealed record BuildProfile
 
     /// <summary>The loading-screen layout.</summary>
     public LoadingScreenLayout LoadingScreen { get; init; } = LoadingScreenLayout.Default;
+
+    /// <summary>The UI frame tree's layout, which <see cref="ClientScreen"/> walks.</summary>
+    public FrameTreeLayout FrameTree { get; init; } = FrameTreeLayout.Default;
 }
 
 /// <summary>

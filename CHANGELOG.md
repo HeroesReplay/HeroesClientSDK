@@ -3,6 +3,32 @@
 Each release is a `vX.Y.Z` tag on `main`. Its `.nupkg` and SHA-256 are on the
 [GitHub Release](https://github.com/HeroesReplay/HeroesClientSDK/releases) of that tag.
 
+## 0.4.2
+
+The follow-ups to 0.4.0 (#12). Additive: no 0.4.x name changes, and every read behaves as before.
+
+- **Offline check of a saved module image.** `HeroesClientProcess.FromImage(path)` serves the
+  image that `Save-ModuleImage.ps1` (skill `heroes-client-re`) saves from a running client, with
+  its build from the image's own `FileVersion` string; it never throws (`no-image`, `bad-image`).
+  `ClientDiscovery.Run(client, options, clientVersion)` runs every reader's discovery on it (or on
+  any client) and reports what each found: `MatchClockDiscovery`, `LoadingScreenDiscovery` and
+  `ClientScreenDiscovery` (the menu root, the screen and game-launch tables, and the frame classes
+  `ClientScreen` names). `heroes-client-probe --image <file>` prints it. On the 2.57.0.98348 image:
+  every reader ok in 248 ms. This replaces the exe-file scan of #1, which cannot work because the
+  exe's code is encrypted on disk.
+- **The frame tree's layout is profile data.** `FrameTreeLayout` (parent `0x50`, flags `0x48`,
+  first child `0x40`, node `0x18`, next `0x20`, IsA slot `0x240`, visible bit 0) is
+  `BuildProfile.FrameTree`, chosen like `LoadingScreenLayout` by the running exe's build (a passed
+  version only when the exe has none). `ClientScreen` now uses `HeroesClientOptions.Profiles`. A
+  patch that moves the tree needs a registry entry, not a code change.
+- **One code scan per process for both screen readers.** A `LoadingScreen` and a `ClientScreen`
+  that read the same `HeroesClientProcess` walk the client's code once between them. Each keeps
+  its own 10-second retry of a failed discovery: it takes the last scan only when it has not used
+  it and the scan is complete or younger than 10 seconds. `Read(Process)` gives each reader its own
+  attachment, so it scans as before.
+- A pattern site that starts in the overlap of two 1 MB chunks of a scan is counted once, by the
+  chunk it starts in. Before, both chunks counted it.
+
 ## 0.4.1
 
 More client states from memory for HeroesReplay#292. Additive: no 0.4.0 name changes.

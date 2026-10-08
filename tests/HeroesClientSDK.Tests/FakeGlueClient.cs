@@ -28,8 +28,9 @@ internal sealed class FakeGlueClient : IProcessMemory
     private const long LaunchManager = 0x4_0000_0000L;
     private const int LoadingIndex = 5;
 
-    // The frame tree (2.57 layout): parent +0x50, flags +0x48 (bit 0 visible), first child
-    // node +0x40, a child's node at +0x18 and its next sibling node at +0x20, and a tagged end.
+    // The frame tree, by default in the 2.57 layout: parent +0x50, flags +0x48 (bit 0 visible),
+    // first child node +0x40, a child's node at +0x18 and its next sibling node at +0x20, and a
+    // tagged end. A client built with another FrameTreeLayout lays its frames out that way.
     public const long Top = 0x5_0000_0000L;
     public const long MenuContainer = 0x5_0000_1000L;
     public const long GameUi = 0x5_0000_2000L;
@@ -47,21 +48,23 @@ internal sealed class FakeGlueClient : IProcessMemory
     private readonly Dictionary<long, List<long>> children = new();
     private readonly Dictionary<string, long> vtables = new();
     private readonly string fileVersion;
+    private readonly FrameTreeLayout layout;
+    private int screenSites;
     private int nameAt = 0x6000;
     private int dialogs;
 
     public FakeGlueClient(
         bool glueSite = true,
         bool table = true,
-        string fileVersion = "2.57.0.98348"
+        string fileVersion = "2.57.0.98348",
+        FrameTreeLayout layout = null,
+        int screenSites = 3
     )
     {
         this.fileVersion = fileVersion;
+        this.layout = layout ?? FrameTreeLayout.Default;
         WriteHeaders();
-        for (int i = 0; i < 3; i++)
-        {
-            WriteScreenGlobalSite(0x40 + i * 0x40);
-        }
+        AddScreenSites(screenSites);
 
         if (glueSite)
         {
@@ -78,6 +81,15 @@ internal sealed class FakeGlueClient : IProcessMemory
 
     public ClientModule Module(int processId) =>
         new(processId, Base, ModuleSize, fileVersion, StartedAt: processId);
+
+    /// <summary>More screen-state global sites, as a client that unpacks its code shows them.</summary>
+    public void AddScreenSites(int count)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            WriteScreenGlobalSite(0x40 + screenSites++ * 0x40);
+        }
+    }
 
     public void AddGlueSite()
     {
@@ -165,7 +177,7 @@ internal sealed class FakeGlueClient : IProcessMemory
         return frame;
     }
 
-    public void SetFlags(long frame, byte flags) => heap[frame][0x48] = flags;
+    public void SetFlags(long frame, byte flags) => heap[frame][layout.FlagsOffset] = flags;
 
     /// <summary>
     /// The game-launch manager: its creator and result-store code (recorded from 2.57.0.98348,
@@ -256,14 +268,14 @@ internal sealed class FakeGlueClient : IProcessMemory
         AddFrame(Top, "CRoot", 0x6B, 0);
         AddFrame(MenuContainer, "CLayer", 0x6B, Top);
         AddFrame(GameUi, "CGameUI", 0x7B, Top);
-        BitConverter.GetBytes(MenuContainer).CopyTo(root, 0x50);
+        BitConverter.GetBytes(MenuContainer).CopyTo(root, layout.ParentOffset);
     }
 
     private void AddFrame(long frame, string className, byte flags, long parent)
     {
         heap[frame] = new byte[0x100];
         BitConverter.GetBytes(Class(className)).CopyTo(heap[frame], 0);
-        heap[frame][0x48] = flags;
+        heap[frame][layout.FlagsOffset] = flags;
         children[frame] = new List<long>();
         if (parent != 0)
         {
@@ -276,12 +288,14 @@ internal sealed class FakeGlueClient : IProcessMemory
     {
         List<long> list = children[parent];
         long end = (parent + 0x38) | 1;
-        BitConverter.GetBytes(list.Count == 0 ? end : list[0] + 0x18).CopyTo(heap[parent], 0x40);
+        BitConverter
+            .GetBytes(list.Count == 0 ? end : list[0] + layout.NodeOffset)
+            .CopyTo(heap[parent], layout.FirstChildOffset);
         for (int i = 0; i < list.Count; i++)
         {
-            long next = i + 1 < list.Count ? list[i + 1] + 0x18 : end;
-            BitConverter.GetBytes(next).CopyTo(heap[list[i]], 0x20);
-            BitConverter.GetBytes(parent).CopyTo(heap[list[i]], 0x50);
+            long next = i + 1 < list.Count ? list[i + 1] + layout.NodeOffset : end;
+            BitConverter.GetBytes(next).CopyTo(heap[list[i]], layout.NextOffset);
+            BitConverter.GetBytes(parent).CopyTo(heap[list[i]], layout.ParentOffset);
         }
     }
 
@@ -306,7 +320,7 @@ internal sealed class FakeGlueClient : IProcessMemory
         int vtable = 0x8000 + n * 0x300;
         int isA = 0x1000 + n * 0x80;
         int staticType = isA + 0x20;
-        BitConverter.GetBytes(Base + TextRva + isA).CopyTo(rdata, vtable + 0x240);
+        BitConverter.GetBytes(Base + TextRva + isA).CopyTo(rdata, vtable + layout.IsASlot);
         byte[] isACode = ClientScreenTests.Hex("40 53 48 83 EC 20 48 8B DA E8 00 00 00 00");
         BitConverter.GetBytes(staticType - (isA + 9 + 5)).CopyTo(isACode, 10);
         Array.Copy(isACode, 0, text, isA, isACode.Length);

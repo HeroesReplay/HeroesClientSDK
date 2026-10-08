@@ -102,6 +102,17 @@ public sealed class MatchClock : IDisposable
 
     internal long CandidateTickRva => tickRva;
 
+    internal long CandidateSpeedRva => speedRva;
+
+    /// <summary>The clock pattern's sites in the last discovery.</summary>
+    internal int PatternSites { get; private set; }
+
+    /// <summary>
+    /// How the last discovery ended: "pattern", "fixed", "unsupported-build",
+    /// "pattern-disagreed" or "out-of-range".
+    /// </summary>
+    internal string DiscoveryReason => discoveryReason;
+
     /// <summary>
     /// Reads the match clock of <paramref name="process"/>. A new process (pid and start time)
     /// starts discovery over. <paramref name="clientVersion"/> is optional: when it is given and
@@ -382,6 +393,7 @@ public sealed class MatchClock : IDisposable
             out long patternTick,
             out long patternSpeed
         );
+        PatternSites = sites;
         if (agreed && InRange(patternTick) && InRange(patternSpeed))
         {
             tickRva = patternTick;
