@@ -3,6 +3,27 @@
 Each release is a `vX.Y.Z` tag on `main`. Its `.nupkg` and SHA-256 are on the
 [GitHub Release](https://github.com/HeroesReplay/HeroesClientSDK/releases) of that tag.
 
+## 0.4.1
+
+More client states from memory for HeroesReplay#292. Additive: no 0.4.0 name changes.
+
+- **`ClientScreenKind`** gains `Authenticating`, `Splash`, `MapLoading`, `Dialog` and `Download`.
+  - `Splash` / `MapLoading`: the loading screen's `CCustomLoadingPanel` (the players) is hidden on
+    the boot splash and shown on a map loading screen, with or without the screen bit and before
+    any menu. `Loading` now means the panel did not read.
+  - `Authenticating`: Battle.net's AUTHENTICATION "Connecting..." panel, a shown `CLoginDialog`
+    over `ScreenLoginUnified`. `Login` (and `OnLogin`) is now the email and password form only.
+  - `Dialog`: a shown `CStandardDialog`, `CBattlenetErrorDialog` or `CDisconnectedDialog`.
+  - `Download`: the game-data DOWNLOADING dialog, a shown `CProgressBarDialog`.
+- **`ClientScreenSample`** gains `Dialogs` (the shown top-level dialogs by class),
+  `LaunchResultCode` and `LaunchResult` (the client's last game-launch result and its
+  `@UI/GameLaunch*` key, such as `GameLaunchBaseBuildMissing`), `LaunchState`, `OnAuthenticating`,
+  `OnDialog`, `OnDownload` and `DialogShown(className)`. `OnLoading` covers `Splash` and
+  `MapLoading`, and `SignedIn` is false while authenticating.
+- **`GameLaunchPattern`** finds the client's game-launch manager from its creator code and the
+  offsets of its result and state from the code that stores and tests them. `GameLaunchTable`
+  reads the message keys from the client.
+
 ## 0.4.0
 
 A breaking release. The API follows one pattern (#7), and the rest of #1 lands. The reads behave

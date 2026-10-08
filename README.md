@@ -8,9 +8,12 @@ Read-only access to a running Heroes of the Storm client's memory on Windows:
 - **Loading screen** (`LoadingScreen`): whether the client shows a menu, a loading screen (boot
   splash or map loading), or a match.
 - **Menu screens** (`ClientScreen`): which screen the client shows, by the client's own screen
-  names: the login form, home, the loading screen, the score screen, another menu, or a match. It
-  also says whether the client is signed in (false on the login form, true on home), and reads the
-  MVP and awards screen at the end of a match (`Awards`) from the client's UI frame tree.
+  names and UI frame classes: the email and password form, Battle.net authentication, home, the
+  boot splash, a map loading screen, the score screen, another menu, a message dialog, the
+  game-data DOWNLOADING dialog, a match, or the MVP and awards screen at its end. It also says
+  whether the client is signed in (false on the login screen, true on home), which dialogs are
+  shown, and the client's last game-launch result by its message key (for example
+  `GameLaunchBaseBuildMissing`).
 
 Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
 process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
@@ -105,7 +108,8 @@ Console.WriteLine($"{screen.Screen} (menu seen: {screen.MenuSeen}, map loading: 
 // The client version is optional. Pass one only to be told when the running exe is another build.
 using var menus = new ClientScreen();
 ClientScreenSample menu = menus.Read(client, HeroesClientVersion.TryParse("2.57.0.98348"));
-// Home, Login, Loading, Score, Awards, Menu, Match, NoScreen or Unknown, plus the screens shown
+// Home, Login, Authenticating, Splash, MapLoading, Score, Awards, Menu, Dialog, Download, Match,
+// NoScreen or Unknown, plus the screens and dialogs shown and the last game-launch result
 Console.WriteLine($"{menu.Screen} [{string.Join(", ", menu.Shown)}] signed in: {menu.SignedIn}");
 if (menu.VersionMismatch)
 {
@@ -212,10 +216,27 @@ bit per screen that is shown and one frame per screen; `GlueScreenPattern` finds
 from the code that tests a screen (`0x1D4` and `0x1F0` on 2.57.0.98304 and 2.57.0.98348). The
 bit of each screen comes from the client's own template table (`ScreenHome/ScreenHome`, ...), so a
 build that reorders its screens still reads right. When the menus are torn down for a match the
-loading screen's frame is gone, and the sample reads `Match`. A loading screen counts as a map
-(`MapLoading`) only after that process has shown a menu or a match, because the boot splash is the
-same screen. Measured on 2.57.0.98348: home `0x6181`, the login form `0x60C1`, the boot splash
-`0x20`.
+loading screen's frame is gone, and the sample reads `Match`. Measured on 2.57.0.98348: home
+`0x6181`, the login screen `0x60C1`, the boot splash `0x20`.
+
+Some screens need the UI frames as well (see the awards screen below for how frames and their
+class names are read):
+
+- **Boot splash or map.** The boot splash and a map loading screen are the same `ScreenLoading`
+  frame. Its `CCustomLoadingPanel` child (the players) shows only on a map loading screen
+  (`MapLoading`); on the boot splash it is hidden (`Splash`). A previous-patch client that loads a
+  replay straight from the file can show its map loading screen with no screen bit, and the panel
+  still names it. When the panel cannot be read the sample says `Loading`, and `MapLoading` falls
+  back to "after a menu or a match".
+- **Authentication or the login form.** Battle.net's AUTHENTICATION "Connecting..." panel is a
+  `CLoginDialog` shown at the top of the UI over `ScreenLoginUnified` (`Authenticating`). The
+  email and password form is the same screen with no dialog over it (`Login`).
+- **Dialogs.** A shown `CStandardDialog`, `CBattlenetErrorDialog` or `CDisconnectedDialog` puts a
+  message with an OK button over the menus (`Dialog`), and a shown `CProgressBarDialog` is the
+  game-data DOWNLOADING dialog (`Download`). The client's game-launch manager (a singleton found
+  from its creator code, `GameLaunchPattern`) keeps the last launch result, and the client's own
+  `@UI/GameLaunch*` table names it (`LaunchResult`), so the message is known without reading its
+  text in any language.
 
 ### How the awards screen is read
 
@@ -240,8 +261,9 @@ panel is missing. Because the panel exists only in a match, a reader that starts
 dotnet run --project tools/HeroesClientSDK.Probe -c Release -- --watch 250
 ```
 
-Each line has the build, the menu screen and the screens shown, the signed-in state, the loading
-screen reader, and the match clock. The three readers share one `HeroesClientProcess` per client.
+Each line has the build, the menu screen and the screens shown, the dialogs shown, the last
+game-launch result and the launch state, the map loading and signed-in states, the loading screen
+reader, and the match clock. The three readers share one `HeroesClientProcess` per client.
 `--version 2.57.0.98304` reports a client that is another build.
 
 ## Build

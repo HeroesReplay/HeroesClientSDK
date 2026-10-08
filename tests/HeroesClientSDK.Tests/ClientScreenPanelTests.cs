@@ -35,7 +35,7 @@ public class ClientScreenPanelTests
         Assert.Equal(ClientScreenKind.Awards, awards.Screen);
         Assert.True(awards.OnAwards);
         Assert.False(awards.OnHome);
-        Assert.Equal(FakeGlueClient.Base + FakeGlueClient.AwardsVtableRva, memory.AwardsVtable);
+        Assert.Equal(client.VtableOf("CEndOfGameAwardsPanel"), memory.AwardsVtable);
     }
 
     [Fact]

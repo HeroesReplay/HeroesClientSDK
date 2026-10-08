@@ -24,6 +24,48 @@ internal static class FrameTree
     public const long NextOffset = 0x20;
     public const int MaxFrames = 300_000;
     public const int MaxDepth = 64;
+    public const int MaxChildren = 4096;
+
+    /// <summary>
+    /// The direct children of <paramref name="frame"/> with their vtables, in list order. Stops
+    /// at the first child whose parent pointer does not name <paramref name="frame"/>.
+    /// </summary>
+    public static List<(long Frame, long Vtable)> Children(IProcessMemory memory, long frame)
+    {
+        var children = new List<(long Frame, long Vtable)>();
+        if (frame == 0 || !TryPointer(memory, frame + FirstChildOffset, out long node))
+        {
+            return children;
+        }
+
+        while (node != 0 && (node & 7) == 0 && children.Count < MaxChildren)
+        {
+            long child = node - NodeOffset;
+            if (
+                !TryPointer(memory, child + ParentOffset, out long parent)
+                || parent != frame
+                || !TryPointer(memory, child, out long vtable)
+                || !TryPointer(memory, child + NextOffset, out long next)
+            )
+            {
+                break;
+            }
+
+            children.Add((child, vtable));
+            node = next;
+        }
+
+        return children;
+    }
+
+    /// <summary>The frame's own visible bit (bit 0 of the flags byte); null when unreadable.</summary>
+    public static bool? Visible(IProcessMemory memory, long frame)
+    {
+        byte[] flags = new byte[1];
+        return frame != 0 && memory.TryRead(frame + FlagsOffset, flags)
+            ? (flags[0] & 1) != 0
+            : null;
+    }
 
     /// <summary>
     /// The top of the tree: the menu root's grandparent (the menu root sits under a menu

@@ -124,7 +124,15 @@ internal sealed class Readers : IDisposable
             ? at.ToString(@"mm\:ss", CultureInfo.InvariantCulture)
             : time.Reason;
         string mismatch = screen.VersionMismatch ? $" (expected {expected})" : string.Empty;
-        return $"{attached.DetectedVersion?.ToString() ?? "?"}{mismatch} screen {screen.Screen} ({screen.Reason}) shown [{shown}] signed-in {Show(screen.SignedIn)} | loading-screen {legacy.Screen} ({legacy.Reason}, menu seen {legacy.MenuSeen}) | clock {clockText}";
+        string dialogs =
+            screen.Dialogs == null || screen.Dialogs.Count == 0
+                ? "-"
+                : string.Join(",", screen.Dialogs);
+        string launch = screen.LaunchResultCode is int code
+            ? $"{code}{(screen.LaunchResult == null ? string.Empty : " " + screen.LaunchResult)}"
+            : "?";
+        string state = screen.LaunchState?.ToString(CultureInfo.InvariantCulture) ?? "?";
+        return $"{attached.DetectedVersion?.ToString() ?? "?"}{mismatch} screen {screen.Screen} ({screen.Reason}) shown [{shown}] dialogs [{dialogs}] launch {launch} state {state} map-loading {Show(screen.MapLoading)} signed-in {Show(screen.SignedIn)} | loading-screen {legacy.Screen} ({legacy.Reason}, menu seen {legacy.MenuSeen}) | clock {clockText}";
     }
 
     private static string Show(bool? value) => value?.ToString() ?? "unknown";
