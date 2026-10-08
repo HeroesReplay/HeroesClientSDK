@@ -3,6 +3,35 @@
 Each release is a `vX.Y.Z` tag on `main`. Its `.nupkg` and SHA-256 are on the
 [GitHub Release](https://github.com/HeroesReplay/HeroesClientSDK/releases) of that tag.
 
+## 0.4.4
+
+Message dialogs with their text, for HeroesReplay#292: Battle.net's own errors from memory
+instead of OCR. Additive: no 0.4.x name changes, and every read behaves as before.
+
+- **`ClientScreenSample.DialogMessages`**: each shown dialog (`Dialogs`, same order) with the
+  title and message its labels hold in memory (`DialogMessage(Dialog, Title, Message)`, plus
+  `Text` and `HasText`). The text is the client's own UTF-8 string, read with `ReadProcessMemory`
+  (no screen capture), with its markup (`<n/>`). A dialog that is not a standard dialog, or whose
+  labels don't read, has a null title and message: a label counts only when its class (named by
+  its `IsA`) ends with `Label`.
+  - Live on 2.57.0.98348 (2026-10-08): the shown `CStandardDialog` of a 2.57.0.98297 replay read
+    "The version of Heroes of the Storm required to play this game is not available."; the hidden
+    `CLoginDialog` reads "Authentication" / "Connecting...".
+- **`ClientScreenSample.BattlenetError`** and **`BattlenetErrorShown`**: a shown
+  `CBattlenetErrorDialog` (first) or `CDisconnectedDialog` (`BattlenetErrorDialogs`) with its
+  text. Both are standard dialogs at the top of the UI, hidden (0x72) until an error shows. The
+  Battle.net error dialog shows the client's Battle.net error table (`BattlenetAPI_GetErrorString`:
+  code 169 "The selected region is currently unavailable. ...", code 153 "Game client version
+  mismatch with selected region. ...") or its own strings ("You were disconnected from Blizzard
+  services."); the disconnect dialog says "Connection Lost". Null when memory can't tell.
+- **`DialogTextLayout`** (build profile data, `BuildProfile.DialogText`): a standard dialog's title
+  label at `+0x248` and message label at `+0x250`; a label's string at `[[label+0x1D8]+0x28]+0x18`
+  (`{u32 length*4, u32 flags, bytes | pointer when flags bit 1}`). `DialogTextPattern` finds the
+  same offsets in the client's own code first (`CStandardDialog::ApplyParams` and
+  `CLabel::SetText`, one site each on 2.57.0.98348 and 2.57.0.98304), within the screen readers'
+  one code walk. `ClientScreenDiscovery.DialogText`/`DialogTextFromCode` and
+  `heroes-client-probe --image` report it; the probe prints each shown dialog's text.
+
 ## 0.4.3
 
 A fix for HeroesReplay#292. No API change.

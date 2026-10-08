@@ -154,6 +154,10 @@ static int CheckImage(string path, HeroesClientVersion expected)
             ? "none missing"
             : "missing " + string.Join(", ", menus.MissingFrameClasses);
     Console.WriteLine($"frame-classes  {menus.FrameClasses} named, {missing}");
+    DialogTextLayout text = menus.DialogText;
+    Console.WriteLine(
+        $"dialog-text    {(menus.DialogTextFromCode ? "pattern" : "profile")}: title label +{Hex(text.TitleLabelOffset)}, message label +{Hex(text.MessageLabelOffset)}, label text +{Hex(text.LabelTextOffset)} +{Hex(text.TextStringOffset)} +{Hex(text.StringOffset)}"
+    );
     Console.WriteLine(
         $"{(found.Ok ? "ok" : "NOT OK")} in {watch.ElapsedMilliseconds.ToString(CultureInfo.InvariantCulture)} ms"
     );
@@ -195,10 +199,38 @@ internal sealed class Readers : IDisposable
             ? $"{code}{(screen.LaunchResult == null ? string.Empty : " " + screen.LaunchResult)}"
             : "?";
         string state = screen.LaunchState?.ToString(CultureInfo.InvariantCulture) ?? "?";
-        return $"{attached.DetectedVersion?.ToString() ?? "?"}{mismatch} screen {screen.Screen} ({screen.Reason}) shown [{shown}] dialogs [{dialogs}] launch {launch} state {state} map-loading {Show(screen.MapLoading)} signed-in {Show(screen.SignedIn)} | loading-screen {legacy.Screen} ({legacy.Reason}, menu seen {legacy.MenuSeen}) | clock {clockText}";
+        string messages =
+            screen.DialogMessages == null || screen.DialogMessages.Count == 0
+                ? string.Empty
+                : " messages ["
+                    + string.Join(
+                        "; ",
+                        screen.DialogMessages.Select(message =>
+                            $"{message.Dialog}: {Excerpt(message.Title)} / {Excerpt(message.Message)}"
+                        )
+                    )
+                    + "]";
+        string battlenet = screen.BattlenetErrorShown switch
+        {
+            true => "shown",
+            false => "none",
+            null => "unknown",
+        };
+        return $"{attached.DetectedVersion?.ToString() ?? "?"}{mismatch} screen {screen.Screen} ({screen.Reason}) shown [{shown}] dialogs [{dialogs}]{messages} battlenet-error {battlenet} launch {launch} state {state} map-loading {Show(screen.MapLoading)} signed-in {Show(screen.SignedIn)} | loading-screen {legacy.Screen} ({legacy.Reason}, menu seen {legacy.MenuSeen}) | clock {clockText}";
     }
 
     private static string Show(bool? value) => value?.ToString() ?? "unknown";
+
+    private static string Excerpt(string text)
+    {
+        if (text == null)
+        {
+            return "?";
+        }
+
+        string line = text.Replace('\r', ' ').Replace('\n', ' ');
+        return line.Length <= 80 ? $"\"{line}\"" : $"\"{line.Substring(0, 80)}...\"";
+    }
 
     public void Dispose()
     {

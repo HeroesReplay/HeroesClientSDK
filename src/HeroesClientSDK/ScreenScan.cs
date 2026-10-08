@@ -6,7 +6,8 @@ namespace HeroesClientSDK;
 /// <summary>
 /// One walk of a client's code for every pattern the two screen readers need: the screen-state
 /// global (<see cref="LoadingScreenPattern"/>, both readers), the menu root's mask and frames
-/// (<see cref="GlueScreenPattern"/>) and the game-launch manager (<see cref="GameLaunchPattern"/>).
+/// (<see cref="GlueScreenPattern"/>), the game-launch manager (<see cref="GameLaunchPattern"/>) and
+/// where a message dialog keeps its text (<see cref="DialogTextPattern"/>).
 /// Each reader decides from the sites what it found, with its own reasons. Each site is counted
 /// once, by the chunk it starts in.
 /// </summary>
@@ -17,7 +18,10 @@ internal sealed class ScreenScan
         Math.Max(LoadingScreenPattern.Width, GlueScreenPattern.Width),
         Math.Max(
             GameLaunchPattern.CreatorWidth,
-            Math.Max(GameLaunchPattern.ResultWidth, GameLaunchPattern.StateWidth)
+            Math.Max(
+                GameLaunchPattern.ResultWidth,
+                Math.Max(GameLaunchPattern.StateWidth, DialogTextPattern.Width)
+            )
         )
     );
 
@@ -51,6 +55,12 @@ internal sealed class ScreenScan
 
     /// <summary>The global and launch-state offset each state test names.</summary>
     public List<(long Global, int Offset)> StateSites { get; } = new();
+
+    /// <summary>The title and message label offsets each dialog ApplyParams site names.</summary>
+    public List<DialogTextPattern.Labels> DialogLabelSites { get; } = new();
+
+    /// <summary>The label text offsets each label SetText site names.</summary>
+    public List<DialogTextPattern.Text> LabelTextSites { get; } = new();
 
     /// <summary>
     /// True when every pattern agreed: the code is unpacked and another walk of this process would
@@ -120,6 +130,8 @@ internal sealed class ScreenScan
         StateSites.AddRange(
             GameLaunchPattern.FindStateOffsets(Own(GameLaunchPattern.StateWidth), rva)
         );
+        DialogLabelSites.AddRange(DialogTextPattern.FindLabels(Own(DialogTextPattern.LabelsWidth)));
+        LabelTextSites.AddRange(DialogTextPattern.FindText(Own(DialogTextPattern.TextWidth)));
     }
 }
 

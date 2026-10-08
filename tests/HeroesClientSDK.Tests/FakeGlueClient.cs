@@ -37,6 +37,9 @@ internal sealed class FakeGlueClient : IProcessMemory
     public const long AwardsPanel = 0x5_0000_3000L;
     private const long DialogBase = 0x5_0001_0000L;
     private const long LoadingChildren = 0x5_0002_0000L;
+    private const int DialogSize = 0x300;
+    private const int LabelSize = 0x200;
+    private long heapAt = 0x6_0000_0000L;
 
     private readonly byte[] headers = new byte[0x1000];
     private readonly byte[] text = new byte[TextSize];
@@ -173,8 +176,122 @@ internal sealed class FakeGlueClient : IProcessMemory
     {
         AddTree();
         long frame = DialogBase + dialogs++ * 0x1000L;
-        AddFrame(frame, className, flags, Top);
+        AddFrame(frame, className, flags, Top, DialogSize);
         return frame;
+    }
+
+    /// <summary>
+    /// A standard dialog's title and message: two <c>CLabel</c> children of the dialog, their
+    /// pointers at the layout's label offsets, each label's text object with its string block,
+    /// and the string (inline, or behind a pointer when <paramref name="behindPointer"/>). A null
+    /// text leaves that label slot empty. Recorded on 2.57.0.98348 (2026-10-08): the shown
+    /// <c>CStandardDialog</c> of a 2.57.0.98297 replay and the hidden <c>CLoginDialog</c>.
+    /// </summary>
+    public void SetDialogText(
+        long dialog,
+        string title,
+        string message,
+        bool behindPointer = false,
+        DialogTextLayout text = null
+    )
+    {
+        text ??= DialogTextLayout.Default;
+        SetLabel(dialog, text.TitleLabelOffset, title, behindPointer, text);
+        SetLabel(dialog, text.MessageLabelOffset, message, behindPointer, text);
+    }
+
+    /// <summary>Points a dialog's label slot at a frame of another class (not a label).</summary>
+    public void SetLabelSlot(long dialog, long offset, string className)
+    {
+        long frame = NextHeap(0x300);
+        AddFrame(frame, className, 0x73, dialog, LabelSize);
+        BitConverter.GetBytes(frame).CopyTo(heap[dialog], (int)offset);
+    }
+
+    /// <summary>A raw string block at a label's text object, for the string format's edge cases.</summary>
+    public long AddLabelWithBlock(
+        long dialog,
+        long offset,
+        byte[] block,
+        DialogTextLayout text = null
+    )
+    {
+        text ??= DialogTextLayout.Default;
+        long label = NextHeap(LabelSize);
+        AddFrame(label, "CLabel", 0x73, dialog, LabelSize);
+        BitConverter.GetBytes(label).CopyTo(heap[dialog], (int)offset);
+        long textObject = NextHeap(0x40);
+        heap[textObject] = new byte[0x40];
+        BitConverter.GetBytes(textObject).CopyTo(heap[label], (int)text.LabelTextOffset);
+        if (block != null)
+        {
+            long at = NextHeap(block.Length + text.StringOffset);
+            heap[at] = new byte[text.StringOffset + block.Length];
+            block.CopyTo(heap[at], (int)text.StringOffset);
+            BitConverter.GetBytes(at).CopyTo(heap[textObject], (int)text.TextStringOffset);
+        }
+
+        return label;
+    }
+
+    /// <summary>
+    /// The client's own code for the dialog text: <c>CStandardDialog::ApplyParams</c> and
+    /// <c>CLabel::SetText</c>, recorded from 2.57.0.98348 (RVA 0x1468436 and 0x14B19F9).
+    /// </summary>
+    public void AddDialogTextSites()
+    {
+        Array.Copy(
+            DialogTextTests.ApplyParams98348,
+            0,
+            text,
+            0x7000,
+            DialogTextTests.ApplyParams98348.Length
+        );
+        Array.Copy(
+            DialogTextTests.SetText98348,
+            0,
+            text,
+            0x7100,
+            DialogTextTests.SetText98348.Length
+        );
+    }
+
+    private void SetLabel(
+        long dialog,
+        long offset,
+        string value,
+        bool behindPointer,
+        DialogTextLayout text
+    )
+    {
+        if (value == null)
+        {
+            return;
+        }
+
+        byte[] bytes = Encoding.UTF8.GetBytes(value);
+        byte[] block = new byte[8 + (behindPointer ? 8 : bytes.Length)];
+        BitConverter.GetBytes((uint)bytes.Length << 2).CopyTo(block, 0);
+        if (behindPointer)
+        {
+            long data = NextHeap(bytes.Length);
+            heap[data] = bytes;
+            BitConverter.GetBytes(2u).CopyTo(block, 4);
+            BitConverter.GetBytes(data).CopyTo(block, 8);
+        }
+        else
+        {
+            bytes.CopyTo(block, 8);
+        }
+
+        AddLabelWithBlock(dialog, offset, value.Length == 0 ? null : block, text);
+    }
+
+    private long NextHeap(long size)
+    {
+        long at = heapAt;
+        heapAt += (size + 0xFFF) & ~0xFFFL;
+        return at;
     }
 
     public void SetFlags(long frame, byte flags) => heap[frame][layout.FlagsOffset] = flags;
@@ -271,9 +388,9 @@ internal sealed class FakeGlueClient : IProcessMemory
         BitConverter.GetBytes(MenuContainer).CopyTo(root, layout.ParentOffset);
     }
 
-    private void AddFrame(long frame, string className, byte flags, long parent)
+    private void AddFrame(long frame, string className, byte flags, long parent, int size = 0x100)
     {
-        heap[frame] = new byte[0x100];
+        heap[frame] = new byte[size];
         BitConverter.GetBytes(Class(className)).CopyTo(heap[frame], 0);
         heap[frame][layout.FlagsOffset] = flags;
         children[frame] = new List<long>();

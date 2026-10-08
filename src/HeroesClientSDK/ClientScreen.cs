@@ -125,6 +125,12 @@ public enum ClientScreenKind
 /// 2.57.0.98348, 6 on the DOWNLOADING dialog and 8 while a replay starts loading). Null when
 /// memory cannot tell. For diagnostics; the values are not a contract.
 /// </param>
+/// <param name="DialogMessages">
+/// Each dialog in <paramref name="Dialogs"/>, in the same order, with the title and message its
+/// labels hold in memory (<see cref="DialogMessage"/>). A dialog that is not a standard dialog,
+/// or whose labels do not read, has a null title and message. Empty when no dialog is shown, null
+/// when memory cannot tell.
+/// </param>
 public readonly record struct ClientScreenSample(
     ClientScreenKind Screen,
     IReadOnlyList<string> Shown,
@@ -135,9 +141,69 @@ public readonly record struct ClientScreenSample(
     IReadOnlyList<string> Dialogs = null,
     int? LaunchResultCode = null,
     string LaunchResult = null,
-    int? LaunchState = null
+    int? LaunchState = null,
+    IReadOnlyList<DialogMessage> DialogMessages = null
 )
 {
+    /// <summary>
+    /// The dialogs the client shows Battle.net's own errors in: <c>CBattlenetErrorDialog</c> (for
+    /// example "The selected region is currently unavailable." or "Game client version mismatch
+    /// with selected region.", Battle.net error 169 and 153 in the client's table, or "You were
+    /// disconnected from Blizzard services.") and <c>CDisconnectedDialog</c> ("Connection Lost").
+    /// Both are standard dialogs at the top of the UI, hidden until an error shows
+    /// (2.57.0.98348, 2026-10-08).
+    /// </summary>
+    public static IReadOnlyList<string> BattlenetErrorDialogs { get; } =
+        new[] { "CBattlenetErrorDialog", "CDisconnectedDialog" };
+
+    /// <summary>
+    /// True when a Battle.net error dialog (<see cref="BattlenetErrorDialogs"/>) is shown, false
+    /// when memory reads the dialogs and none is, null when memory cannot tell.
+    /// </summary>
+    public bool? BattlenetErrorShown =>
+        Dialogs == null ? null
+        : BattlenetError != null ? true
+        : false;
+
+    /// <summary>
+    /// The shown Battle.net error dialog with its text (<c>CBattlenetErrorDialog</c> first, then
+    /// <c>CDisconnectedDialog</c>), or null when none is shown or memory cannot tell. Its title
+    /// and message are null when the labels do not read.
+    /// </summary>
+    public DialogMessage? BattlenetError
+    {
+        get
+        {
+            if (Dialogs == null)
+            {
+                return null;
+            }
+
+            foreach (string dialog in BattlenetErrorDialogs)
+            {
+                if (!DialogShown(dialog))
+                {
+                    continue;
+                }
+
+                if (DialogMessages != null)
+                {
+                    foreach (DialogMessage message in DialogMessages)
+                    {
+                        if (string.Equals(message.Dialog, dialog, StringComparison.Ordinal))
+                        {
+                            return message;
+                        }
+                    }
+                }
+
+                return new DialogMessage(dialog, null, null);
+            }
+
+            return null;
+        }
+    }
+
     /// <summary>True when memory can tell which screen this is.</summary>
     public bool Ok => Screen != ClientScreenKind.Unknown;
 
@@ -285,6 +351,8 @@ public sealed class ClientScreen : IDisposable
     private readonly ScreenScans ownScans = new();
     private ScreenScan lastScan;
     private FrameTreeLayout frameLayout = FrameTreeLayout.Default;
+    private DialogTextLayout dialogText = DialogTextLayout.Default;
+    private bool dialogTextFromCode;
     private int pid;
     private long startedAt;
     private long moduleBase;
@@ -332,6 +400,10 @@ public sealed class ClientScreen : IDisposable
     internal string DiscoveryReason => reason;
 
     internal FrameTreeLayout FrameLayout => frameLayout;
+
+    internal DialogTextLayout DialogText => dialogText;
+
+    internal bool DialogTextFromCode => dialogTextFromCode;
 
     internal long GlobalRva => globalRva;
 
@@ -493,7 +565,19 @@ public sealed class ClientScreen : IDisposable
         }
 
         long top = FrameTree.Top(memory, frameLayout, root);
-        IReadOnlyList<string> dialogs = ShownDialogs(memory, top);
+        List<(string Name, long Frame)> shownDialogs = ShownDialogs(memory, top);
+        IReadOnlyList<string> dialogs = shownDialogs.Select(dialog => dialog.Name).ToArray();
+        IReadOnlyList<DialogMessage> messages = shownDialogs
+            .Select(dialog =>
+                HeroesClientSDK.DialogText.Read(
+                    memory,
+                    dialogText,
+                    dialog.Frame,
+                    dialog.Name,
+                    vtable => ClassOf(memory, vtable)
+                )
+            )
+            .ToArray();
         (int? launchCode, string launchResult, int? launchState) = ReadLaunch(memory);
         ClientScreenSample Sampled(
             ClientScreenKind kind,
@@ -510,7 +594,8 @@ public sealed class ClientScreen : IDisposable
                 dialogs,
                 launchCode,
                 launchResult,
-                launchState
+                launchState,
+                messages
             );
 
         long loadingFrame = 0;
@@ -724,16 +809,17 @@ public sealed class ClientScreen : IDisposable
     /// visible bit is set: the dialogs the client shows over every screen. The list is read on
     /// every call (about 45 children on 2.57): the client creates <c>CLoginDialog</c> when the
     /// login screen first shows, and a cached list made the AUTHENTICATION panel read as the
-    /// login form for a moment (2.57.0.98348, 2026-10-08 15:56:22).
+    /// login form for a moment (2.57.0.98348, 2026-10-08 15:56:22). Each comes with its frame, so
+    /// its text can be read (<see cref="HeroesClientSDK.DialogText"/>).
     /// </summary>
-    private IReadOnlyList<string> ShownDialogs(IProcessMemory memory, long top)
+    private List<(string Name, long Frame)> ShownDialogs(IProcessMemory memory, long top)
     {
+        var shown = new List<(string Name, long Frame)>();
         if (top == 0)
         {
-            return Array.Empty<string>();
+            return shown;
         }
 
-        var shown = new List<string>();
         foreach ((long child, long vtable) in FrameTree.Children(memory, frameLayout, top))
         {
             string name = ClassOf(memory, vtable);
@@ -743,7 +829,7 @@ public sealed class ClientScreen : IDisposable
                 && FrameTree.Visible(memory, frameLayout, child) == true
             )
             {
-                shown.Add(name);
+                shown.Add((name, child));
             }
         }
 
@@ -912,6 +998,8 @@ public sealed class ClientScreen : IDisposable
         launchStateOffset = 0;
         launchKeys = new List<string>();
         frameLayout = FrameTreeLayout.Default;
+        dialogText = DialogTextLayout.Default;
+        dialogTextFromCode = false;
         lastScan = null;
         mapPanelFrame = 0;
         mapPanelSince = default;
@@ -933,8 +1021,8 @@ public sealed class ClientScreen : IDisposable
         discovered = true;
         DateTimeOffset now = time.GetUtcNow();
         rediscoverAt = now + RediscoverAfter;
-        frameLayout =
-            profiles.Resolve(Version() ?? clientVersion).FrameTree ?? FrameTreeLayout.Default;
+        BuildProfile profile = profiles.Resolve(Version() ?? clientVersion);
+        frameLayout = profile.FrameTree ?? FrameTreeLayout.Default;
         ScreenScan scan = scans.For(memory, module, lastScan, now);
         lastScan = scan;
         IReadOnlyList<ModuleSection> sections = scan.Sections;
@@ -944,6 +1032,13 @@ public sealed class ClientScreen : IDisposable
             return;
         }
 
+        // Where a message dialog keeps its text: the client's own code first, else the profile.
+        dialogTextFromCode = DialogTextPattern.TryAgree(
+            scan.DialogLabelSites,
+            scan.LabelTextSites,
+            out DialogTextLayout fromCode
+        );
+        dialogText = dialogTextFromCode ? fromCode : profile.DialogText ?? DialogTextLayout.Default;
         List<long> globals = scan.ScreenGlobals;
         List<GlueScreenPattern.Offsets> sites = scan.GlueSites;
         List<long> launchGlobals = scan.LaunchGlobals;
