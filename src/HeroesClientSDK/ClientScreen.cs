@@ -22,8 +22,9 @@ public enum ClientScreenKind
 
     /// <summary>
     /// <c>ScreenLoading</c> when memory cannot tell the boot splash from a map loading screen
-    /// (the loading screen's panels did not read). See <see cref="Splash"/> and
-    /// <see cref="MapLoading"/>.
+    /// yet: the loading screen's panels did not read, or, before the process has shown any menu,
+    /// the map panel has shown for less than a second (reason <c>map-panel-unconfirmed</c>). See
+    /// <see cref="Splash"/> and <see cref="MapLoading"/>.
     /// </summary>
     Loading,
 
@@ -63,7 +64,8 @@ public enum ClientScreenKind
     /// <summary>
     /// A map loading screen: the <c>ScreenLoading</c> frame shows its map panel
     /// (<c>CCustomLoadingPanel</c> with the players). A previous-patch client that loads a replay
-    /// straight from the file can show it with no screen bit in the mask.
+    /// straight from the file can show it with no screen bit in the mask. Before the process has
+    /// shown any menu, the panel must have read shown for a second (two reads or more) first.
     /// </summary>
     MapLoading,
 
@@ -269,6 +271,14 @@ public sealed class ClientScreen : IDisposable
     private static readonly TimeSpan RediscoverAfter = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PanelWalkInterval = TimeSpan.FromSeconds(5);
 
+    /// <summary>
+    /// Before a process has shown any menu, the loading screen's map panel counts only after it
+    /// has read shown on every read for at least this long (two reads or more). On 2026-10-08 the
+    /// newest exe at the start of a HeroesSwitcher handoff read the panel shown once on its boot
+    /// splash; the next read, 1.4 s later, read it hidden (HeroesReplay#292).
+    /// </summary>
+    internal static readonly TimeSpan MapPanelConfirmAfter = TimeSpan.FromSeconds(1);
+
     private readonly ProcessAttachment attachment = new();
     private readonly BuildProfileRegistry profiles;
     private readonly TimeProvider time;
@@ -296,6 +306,8 @@ public sealed class ClientScreen : IDisposable
     private int launchResultOffset;
     private int launchStateOffset;
     private List<string> launchKeys = new();
+    private long mapPanelFrame;
+    private DateTimeOffset mapPanelSince;
 
     /// <summary>
     /// A reader with <paramref name="options"/>, or the defaults when null. The menu root's
@@ -456,6 +468,10 @@ public sealed class ClientScreen : IDisposable
         }
 
         UseModule(module);
+
+        // A run of reads that show the map panel ends at any read that does not show it.
+        long panelRun = mapPanelFrame;
+        mapPanelFrame = 0;
         if (!discovered || (!Ready && time.GetUtcNow() >= rediscoverAt))
         {
             Discover(memory, module, clientVersion, scans ?? ownScans);
@@ -554,11 +570,12 @@ public sealed class ClientScreen : IDisposable
 
         ClientScreenKind kind = Classify(shown);
         bool? mapPanel = MapPanelShown(memory, loadingFrame, top);
+        bool mapConfirmed = mapPanel == true && MapPanelConfirmed(loadingFrame, panelRun);
         if (kind == ClientScreenKind.Loading)
         {
             kind = mapPanel switch
             {
-                true => ClientScreenKind.MapLoading,
+                true when mapConfirmed => ClientScreenKind.MapLoading,
                 false => ClientScreenKind.Splash,
                 _ => ClientScreenKind.Loading,
             };
@@ -566,8 +583,9 @@ public sealed class ClientScreen : IDisposable
         else if (kind == ClientScreenKind.NoScreen && mapPanel == true)
         {
             // A previous-patch client that loads a replay straight from the file can show the map
-            // loading screen without its screen bit (2.57.0.98304, 2026-10-08).
-            kind = ClientScreenKind.MapLoading;
+            // loading screen without its screen bit (2.57.0.98304, 2026-10-08). Until the panel
+            // is confirmed it is a loading screen memory cannot name yet.
+            kind = mapConfirmed ? ClientScreenKind.MapLoading : ClientScreenKind.Loading;
         }
         else if (kind == ClientScreenKind.Login && Contains(dialogs, LoginDialog))
         {
@@ -633,9 +651,31 @@ public sealed class ClientScreen : IDisposable
                 ClientScreenKind.NoScreen => "no-screen",
                 ClientScreenKind.Awards => "awards",
                 ClientScreenKind.MapLoading when shown.Count == 0 => "map-panel",
+                ClientScreenKind.Loading when mapPanel == true => "map-panel-unconfirmed",
                 _ => "screens",
             }
         );
+    }
+
+    /// <summary>
+    /// Whether a shown map panel counts as a map loading screen. After this process has shown a
+    /// menu or a match, one read is enough: the boot splash is over. Before any menu, the panel
+    /// must read shown on every read of the same loading frame for at least
+    /// <see cref="MapPanelConfirmAfter"/>, so the moment it shows on the newest exe's boot splash
+    /// at the start of a HeroesSwitcher handoff is not a map. A previous-patch client that loads
+    /// the replay straight from the file still reads <see cref="ClientScreenKind.MapLoading"/>
+    /// before any menu, one second later.
+    /// </summary>
+    private bool MapPanelConfirmed(long loadingFrame, long panelRun)
+    {
+        DateTimeOffset now = time.GetUtcNow();
+        if (panelRun != loadingFrame)
+        {
+            mapPanelSince = now;
+        }
+
+        mapPanelFrame = loadingFrame;
+        return menuSeen || now - mapPanelSince >= MapPanelConfirmAfter;
     }
 
     private const string AwardsPanel = "CEndOfGameAwardsPanel";
@@ -873,6 +913,8 @@ public sealed class ClientScreen : IDisposable
         launchKeys = new List<string>();
         frameLayout = FrameTreeLayout.Default;
         lastScan = null;
+        mapPanelFrame = 0;
+        mapPanelSince = default;
     }
 
     /// <summary>
