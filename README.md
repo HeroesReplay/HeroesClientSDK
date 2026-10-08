@@ -7,6 +7,9 @@ Read-only access to a running Heroes of the Storm client's memory on Windows:
   not need new addresses. Build `2.55.17.98025` also has fixed addresses as a fallback.
 - **Screen state** (`LoadingScreenMemory`): whether the client shows a menu, a loading screen
   (boot splash or map loading), or a match.
+- **Menu screens** (`ClientScreenMemory`): which screen the client shows, by the client's own
+  screen names: the login form, home, the loading screen, the score screen, another menu, or a
+  match. It also says whether the client is signed in (false on the login form, true on home).
 
 Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
 process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
@@ -97,9 +100,15 @@ TimeSpan? running = await StableMatchClock.ReadRunningAsync(
 using var screens = new LoadingScreenMemory();
 LoadingScreenSample screen = screens.Read(client);
 Console.WriteLine($"{screen.Screen} (menu seen: {screen.MenuSeen}, map loading: {screen.MapLoading})");
+
+// The client version is optional. Pass one only to be told when the running exe is another build.
+using var menus = new ClientScreenMemory();
+ClientScreenSample menu = menus.Read(client);
+// Home, Login, Loading, Score, Menu, Match, NoScreen or Unknown, plus the screens shown
+Console.WriteLine($"{menu.Screen} [{string.Join(", ", menu.Shown)}] signed in: {menu.SignedIn}");
 ```
 
-Keep one `StableMatchClock` and one `LoadingScreenMemory` for the life of your watcher. Each
+Keep one `StableMatchClock`, one `LoadingScreenMemory` and one `ClientScreenMemory` per client for the life of your watcher. Each
 reader starts over by itself when it sees a new client process (pid and start time), and
 retries a failed pattern scan every 10 seconds while a fresh client is still unpacking its code.
 
@@ -131,6 +140,29 @@ rules hold for every release:
 
 `LastTelemetry` reports where discovery stands (`discovering`, `memory-locked`,
 `memory-unlocked`) and changes only when the state or reason does, so it is cheap to log.
+
+### How the menu screens are read
+
+The object at the screen-state global is the client's menu root. It holds a 64-bit mask with one
+bit per screen that is shown and one frame per screen; `GlueScreenPattern` finds both offsets
+from the code that tests a screen (`0x1D4` and `0x1F0` on 2.57.0.98304 and 2.57.0.98348). The
+bit of each screen comes from the client's own template table (`ScreenHome/ScreenHome`, ...), so a
+build that reorders its screens still reads right. When the menus are torn down for a match the
+loading screen's frame is gone, and the sample reads `Match`. A loading screen counts as a map
+(`MapLoading`) only after that process has shown a menu or a match, because the boot splash is the
+same screen. Measured on 2.57.0.98348: home `0x6181`, the login form `0x60C1`, the boot splash
+`0x20`.
+
+## Probe
+
+`tools/HeroesClientSDK.Probe` prints what the SDK reads from every running client, read-only:
+
+```powershell
+dotnet run --project tools/HeroesClientSDK.Probe -c Release -- --watch 250
+```
+
+Each line has the build, the menu screen and the screens shown, the signed-in state, the loading
+screen reader, and the match clock. `--version 2.57.0.98304` reports a client that is another build.
 
 ## Build
 
