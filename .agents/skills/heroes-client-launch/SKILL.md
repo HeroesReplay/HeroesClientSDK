@@ -267,8 +267,9 @@ no rule covers the exe. Spectate itself runs unelevated and only warns. Never cl
 | Login form | "password" + "email" or "log in" | `ScreenLoginUnified` in the mask (`0x60C1`). The AUTHENTICATION "Connecting..." panel is a visible `CLoginDialog` | Current patch: close and ask Battle.net once more. On the handoff exe: ignore |
 | Battle.net disconnected | `BattleNetDisconnect` phrases | | Outage handling |
 
-The game-launch result code is the `@UI/GameLaunch*` table index. The client stores it at `+0x08`
-of a singleton (98348 global RVA `0x3771BA8`, 98304 `0x37729A8`). The full list of codes is in the heroes-client-re skill.
+The game-launch result code is the `@UI/GameLaunch*` table index. The client's game-launch manager
+singleton keeps the last one at `+0x08` (98348 global RVA `0x3771BA8`). HeroesClientSDK#8 finds it per
+build (`GameLaunchPattern`). The full list of codes is in the heroes-client-re skill.
 
 ## For SDK code
 
