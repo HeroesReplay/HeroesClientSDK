@@ -1,0 +1,40 @@
+<Project>
+    <PropertyGroup>
+        <LangVersion>latest</LangVersion>
+        <Nullable>disable</Nullable>
+        <ImplicitUsings>disable</ImplicitUsings>
+        <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+        <Deterministic>true</Deterministic>
+        <EnableNETAnalyzers>true</EnableNETAnalyzers>
+        <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+        <AnalysisLevel>latest</AnalysisLevel>
+        <AnalysisMode>Default</AnalysisMode>
+        <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    </PropertyGroup>
+
+    <!-- Versions come from git tags vX.Y.Z (MinVer). Between tags a build is X.Y.(Z+1)-alpha.0.N. -->
+    <PropertyGroup>
+        <MinVerTagPrefix>v</MinVerTagPrefix>
+        <MinVerDefaultPreReleaseIdentifiers>alpha.0</MinVerDefaultPreReleaseIdentifiers>
+    </PropertyGroup>
+
+    <!-- SourceLink is built into the .NET SDK. The PDB is embedded in the dll. -->
+    <PropertyGroup>
+        <PublishRepositoryUrl>true</PublishRepositoryUrl>
+        <EmbedUntrackedSources>true</EmbedUntrackedSources>
+        <DebugType>embedded</DebugType>
+        <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'"
+            >true</ContinuousIntegrationBuild>
+    </PropertyGroup>
+
+    <!-- The client and its memory are Windows only. -->
+    <ItemGroup>
+        <AssemblyAttribute Include="System.Runtime.Versioning.SupportedOSPlatformAttribute">
+            <_Parameter1>windows</_Parameter1>
+        </AssemblyAttribute>
+    </ItemGroup>
+
+    <ItemGroup>
+        <PackageReference Include="MinVer" PrivateAssets="all" />
+    </ItemGroup>
+</Project>

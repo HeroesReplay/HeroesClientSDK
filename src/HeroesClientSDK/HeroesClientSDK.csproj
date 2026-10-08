@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <TargetFramework>net10.0</TargetFramework>
+        <RootNamespace>HeroesClientSDK</RootNamespace>
+        <AssemblyName>HeroesClientSDK</AssemblyName>
+        <IsPackable>true</IsPackable>
+        <PackageId>HeroesClientSDK</PackageId>
+        <Authors>Heroes Replay</Authors>
+        <Company>Heroes Replay</Company>
+        <Description>Read-only Heroes of the Storm client memory for Windows: the match clock and which screen the client shows (menu, map loading, match), found per client build.</Description>
+        <PackageTags>heroes-of-the-storm;hots;memory;match-clock;windows</PackageTags>
+        <PackageLicenseExpression>MIT</PackageLicenseExpression>
+        <PackageProjectUrl>https://github.com/HeroesReplay/HeroesClientSDK</PackageProjectUrl>
+        <RepositoryUrl>https://github.com/HeroesReplay/HeroesClientSDK</RepositoryUrl>
+        <RepositoryType>git</RepositoryType>
+        <PackageReadmeFile>README.md</PackageReadmeFile>
+    </PropertyGroup>
+
+    <ItemGroup>
+        <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    </ItemGroup>
+
+    <ItemGroup>
+        <InternalsVisibleTo Include="HeroesClientSDK.Tests" />
+    </ItemGroup>
+</Project>

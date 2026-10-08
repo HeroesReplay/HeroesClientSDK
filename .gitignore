@@ -1,0 +1,11 @@
+[Bb]in/
+[Oo]bj/
+artifacts/
+TestResults/
+.vs/
+.idea/
+*.user
+*.suo
+*.nupkg
+*.snupkg
+*.binlog

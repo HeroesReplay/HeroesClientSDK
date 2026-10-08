@@ -1,0 +1,8 @@
+<Solution>
+    <Folder Name="/src/">
+        <Project Path="src/HeroesClientSDK/HeroesClientSDK.csproj" />
+    </Folder>
+    <Folder Name="/tests/">
+        <Project Path="tests/HeroesClientSDK.Tests/HeroesClientSDK.Tests.csproj" />
+    </Folder>
+</Solution>

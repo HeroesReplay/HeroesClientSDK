@@ -1,0 +1,25 @@
+root = true
+
+[*]
+charset = utf-8
+insert_final_newline = true
+
+# Unused code fails the build. Other analyzer warnings stay warnings.
+[*.cs]
+dotnet_diagnostic.IDE0005.severity = error
+dotnet_diagnostic.IDE0051.severity = error
+dotnet_diagnostic.IDE0052.severity = error
+dotnet_diagnostic.CS0168.severity = error
+dotnet_diagnostic.CS0169.severity = error
+dotnet_diagnostic.CS0219.severity = error
+dotnet_diagnostic.CS0414.severity = error
+dotnet_diagnostic.CS8321.severity = error
+
+[**/obj/**.cs]
+generated_code = true
+
+[**/*.g.cs]
+generated_code = true
+
+[**/*.AssemblyInfo.cs]
+generated_code = true
