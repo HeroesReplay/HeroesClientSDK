@@ -272,13 +272,15 @@ no rule covers the exe. Spectate itself runs unelevated and only warns. Never cl
 
 ## Dialogs on the client
 
-| Dialog | Text (OCR today, `ClientScreenText`) | Memory lead (#292) | HeroesReplay does |
-| --- | --- | --- | --- |
-| Version mismatch | "version mismatch" | `@UI/GameLaunchDataBuildNumMismatch`, launch result code 15 | Close, defer (`VersionMismatch`); one launcher restart, then an operator (`LauncherRecoveryPlan`) |
-| Version not available | "version of Heroes ... not available" | Top-level `CStandardDialog`; launch result 23 `GameLaunchUnsupportedNoData`, read live on 2026-10-08 (`ClientScreenKind.Dialog`, 0.4.1) | Close, defer `BuildNotInstalled`, hold the build |
-| Region unavailable | "region" + "unavailable" | Not reproduced yet | Close, defer (`RegionUnavailable`) |
-| Login form | "password" + "email" or "log in" | `ScreenLoginUnified` in the mask (`0x60C1`). The AUTHENTICATION "Connecting..." panel is a visible `CLoginDialog` | Current patch: close and ask Battle.net once more. On the handoff exe: ignore |
-| Battle.net disconnected | `BattleNetDisconnect` phrases | | Outage handling |
+| Dialog | How HeroesReplay reads it (#292) | HeroesReplay does |
+| --- | --- | --- |
+| Any game-launch failure | Memory: a shown `CStandardDialog` with a launch result (`ClientScreenKind.Dialog`, `LaunchResult`). "The version of Heroes of the Storm required to play this game is not available." is result 23 `GameLaunchUnsupportedNoData`, read live with the 2.57.0.98297 replay (2026-10-08, twice). Not OCR'd | Close, defer (`VersionMismatch`); while a missing build downloads: `BuildNotInstalled` and hold the build |
+| Region (game launch) | Memory: result 20 `GameLaunchUnsupportedInCN`, "Replays and saved games created before version 1.3.0 are not supported in this region.", the only region result in the client's table | As any game-launch failure |
+| "The selected region is currently unavailable." and "Game client version mismatch with selected region." | Not game-launch results: Battle.net authentication errors in the client's error table (next to `ASTERION_QUERY_ERROR`, `AUTH_*`), shown in the Battle.net error dialog (`CBattlenetErrorDialog`). Still OCR'd; never reproduced | Region: `RegionUnavailable` (keeps the replay at the front). Version mismatch: `VersionMismatch` |
+| DOWNLOADING | Memory: `ClientScreenKind.Download` (a shown `CProgressBarDialog`). Its text is result 12 `GameLaunchVersionDownloadMessage`, which is not a failure | Leave it running |
+| "Preparing game data" | The client's windows: a visible `#32770` with a `msctls_progress32` child (HeroesReplay `GameDataProgressWindow`) | Leave it running |
+| Login form | Memory: `ClientScreenKind.Login` (`ScreenLoginUnified`, `0x60C1`, no `CLoginDialog`). The AUTHENTICATION "Connecting..." panel is `Authenticating` | Current patch: close and ask Battle.net once more. On the handoff exe: ignore |
+| Battle.net disconnected | Still OCR'd (`BattleNetDisconnect`); never reproduced | Retry once, outage handling |
 
 The game-launch result code is the `@UI/GameLaunch*` table index. The client's game-launch manager
 singleton keeps the last one at `+0x08` (98348 global RVA `0x3771BA8`). HeroesClientSDK#8 finds it per
