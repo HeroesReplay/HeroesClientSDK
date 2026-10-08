@@ -88,6 +88,24 @@ Keep one `StableMatchClock` and one `LoadingScreenMemory` for the life of your w
 reader starts over by itself when it sees a new client process (pid and start time), and
 retries a failed pattern scan every 10 seconds while a fresh client is still unpacking its code.
 
+### Any client build, any number of clients
+
+The SDK must work with whatever Heroes of the Storm builds are installed, side by side. These
+rules hold for every release:
+
+- **No version is required.** No API needs the client version. When a later API accepts one, it
+  is optional (`HeroesClientVersion? clientVersion = null`, or an options type with a nullable
+  `ClientVersion`); null means detect it from the process, or use the generic path.
+- **An unknown or different build never throws.** Reads find the clock and the screen state
+  from instruction patterns, so a new build works without new addresses. A build the patterns do
+  not match reads as not ok with a reason (`unsupported-build`, `pattern-disagreed`), never an
+  exception. Per-build data (today only the fixed addresses of `2.55.17.98025`) is used only when
+  the running exe is that build, and only after the pattern scan.
+- **A version mismatch is reported, not thrown.**
+- **Several clients at once.** Readers keep no static or global client state. Use one reader per
+  client process to read several processes, or several builds, at the same time. A single reader
+  pointed at a different process starts over for that process.
+
 ### How the clock is trusted
 
 - The first ok read of a newly found cell only starts confirming it. A second read that moves
