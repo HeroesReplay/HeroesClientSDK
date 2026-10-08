@@ -39,7 +39,7 @@ To update: `gh release view -R NationalSecurityAgency/ghidra`, `gh release downl
 So there are two kinds of program:
 
 1. **The exe file, with a data-only analysis.** It is quick (about 30 s) and gives the string, RTTI and global map. Use it before a client is running.
-2. **A memory image of a running client.** Make it with `.agents/skills/heroes-client-re/scripts/Save-ModuleImage.ps1`, which is read-only. Give it a full analysis. All the code work happens here.
+2. **A memory image of a running client.** Make it with `.agents/skills/heroes-client-re/scripts/Save-ModuleImage.ps1`, which is read-only. The owner has approved this (heroes-client-re, Rules). Give it a full analysis. All the code work happens here. The loaded code is plain: images of running 2.57.0.98348 and 2.57.0.98304 clients (2026-10-08, `C:\heroesreplay\re\dumps\<version>\`) have `.text` entropy 6.58, against 8.0 in the file.
 
 Do not try to decrypt the file offline. That would be circumventing Blizzard's protection, which is out of bounds.
 
@@ -93,7 +93,7 @@ The Bash tool's `run_in_background` (or `Start-Process`) keeps a long analysis o
 | The same binary as a memory image (Save-ModuleImage, 10 ms to read) | 70 s total (61 s analysis); same functions, xrefs and RVAs as the file |
 | `HeroesOfTheStorm_x64.exe` 2.57.0.98348 (53.6 MB, 38 MB `.text`), import + `data-only` + 4 scripts, 4 GB heap, below-normal | 1.3 min total. Analysis 27 s (ASCII Strings 13.7 s, RTTI 12.9 s). Project 196 MB |
 | One `-process ... -noanalysis -readOnly` run with scripts | 5-9 s (JVM start, script compile, open) |
-| Full analysis of a client memory image | Not measured yet: no client has been dumped. Budget 60-90 min with `large-x64` and 6-8 GB, and write the real figure here |
+| Full analysis of a client memory image | Not measured yet. Images of 98348 and 98304 exist (`C:\heroesreplay\re\dumps`, about 73 MB each), but no full analysis of one has been logged. Budget 60-90 min with `large-x64` and 6-8 GB, and write the real figure here |
 
 A full analysis of an image the size of the client (about 73 MB mapped) also writes a much bigger project than the 196 MB data-only one. Check the free space on C: first (about 8 GB on 2026-10-08).
 
@@ -126,7 +126,7 @@ Arguments are positional plus `key:value` options. Addresses are `rva:0x...` (re
 | `ExportFunction.java` | Decompiles one or more functions to C (`asm` adds the disassembly). After `-noanalysis` it disassembles and builds the function first. | `rva:0x1234567 asm out:...\fn.c` |
 | `FindStringRefs.java` | ASCII and UTF-16 strings containing the text (defined data plus a raw scan), with the code that uses them. `scan` adds a RIP-relative code scan and 8-byte pointer tables. `regex`, `case`. | `"ScreenHome" scan` |
 | `FindSymbols.java` | Symbols by full name: RTTI classes, `::vftable`, demangled functions, imports, labels. `filter:` adds a second substring. | `Screen filter:vftable` |
-| `FindVftables.java` | RTTI from raw bytes: type descriptor, then COL, then vftable for each matching class, with `slots:<n>`. Works with no analysis. An object's first qword is its vftable, so this names the class of a live object. | `CScreenHome exact slots:4` |
+| `FindVftables.java` | RTTI from raw bytes: type descriptor, then COL, then vftable for each matching class, with `slots:<n>`. Works with no analysis. An object's first qword is its vftable, so this names the class of a live object that has RTTI. The UI frame classes (`CScreen*`, dialogs, panels) have none; name those by the IsA slot (heroes-client-re, Findings). | `CScreenHome exact slots:4` |
 | `SetAnalysisOptions.java` | `list`, `preset:large-x64`, `preset:data-only`, or `"<option>:<value>"`. Use it as a `-preScript`. | `preset:large-x64` |
 
 Tested 2026-10-08 on `decompile.exe` from this Ghidra (file and memory image, analyzed and `-noanalysis`) and on the 98348 client exe file. The file and the image gave identical RVAs. XrefsToAddress (with analysis) and FindRipRelativeLoads (without) found the same 13 uses of a global. FindVftables matched Ghidra's RTTI labels.
@@ -148,4 +148,4 @@ Tested 2026-10-08 on `decompile.exe` from this Ghidra (file and memory image, an
 - **Heap.** The headless default is 2 GB. A big analysis that dies with `OutOfMemoryError` needs a larger `GHIDRA_HEADLESS_MAXMEM`. This box has 16 GB and often only about 3 GB free while a live proof runs. Keep the priority below normal and do not run two big analyses at once.
 - **Scripts compile on first use** into `%APPDATA%\ghidra\ghidra_12.1.4_PUBLIC\osgi\compiled-bundles` (a few seconds). An edited script recompiles automatically. Ghidra's own `application.log` and `script.log` are in `%APPDATA%\ghidra\ghidra_12.1.4_PUBLIC`.
 - **`-overwrite` replaces a program of the same name** in the project. Without it, a second import of the same file is skipped.
-- **Data-only RTTI errors are expected on the exe file.** `Failed to disassemble ... (EHDataTypeUtilities)` and `No vfTable found for RTTICompleteObjectLocator` come from the encrypted code. The `CScreen*` type descriptors are in the file, but nothing in the plain sections points at them, so their vftables come from an image (FindVftables on the image).
+- **Data-only RTTI errors are expected on the exe file.** `Failed to disassemble ... (EHDataTypeUtilities)` and `No vfTable found for RTTICompleteObjectLocator` come from the encrypted code. The `CScreen*` type descriptors are in the file, but nothing in the plain sections points at them. The images confirmed that the UI frame classes have no complete object locator at all, so FindVftables doesn't find their vftables even on an image. Vtable slot `+0x240` (`IsA`) names them instead (heroes-client-re, Findings).
