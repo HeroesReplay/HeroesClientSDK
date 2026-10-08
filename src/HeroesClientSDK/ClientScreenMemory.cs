@@ -22,7 +22,11 @@ public enum ClientScreenKind
     /// <summary><c>ScreenLoading</c>: the boot splash or a map loading screen.</summary>
     Loading,
 
-    /// <summary><c>ScreenLoginUnified</c>: the email and password form. Not signed in.</summary>
+    /// <summary>
+    /// <c>ScreenLoginUnified</c>: the login screen. Not signed in yet: either Battle.net
+    /// authentication is still connecting (a client Battle.net started, for a few seconds) or it
+    /// shows the email and password form (a client started without SSO).
+    /// </summary>
     Login,
 
     /// <summary><c>ScreenHome</c>: the signed-in home screen.</summary>
@@ -90,7 +94,10 @@ public readonly record struct ClientScreenSample(
     /// <summary>True on the home screen, false on any other known screen, null when unknown.</summary>
     public bool? Home => Known ? Screen == ClientScreenKind.Home : null;
 
-    /// <summary>True on the login form, false on any other known screen, null when unknown.</summary>
+    /// <summary>
+    /// True on the login screen (authenticating or the email and password form), false on any
+    /// other known screen, null when unknown.
+    /// </summary>
     public bool? LoginForm => Known ? Screen == ClientScreenKind.Login : null;
 
     /// <summary>True on the loading screen, false on any other known screen, null when unknown.</summary>
