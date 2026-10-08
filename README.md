@@ -9,7 +9,9 @@ Read-only access to a running Heroes of the Storm client's memory on Windows:
   (boot splash or map loading), or a match.
 - **Menu screens** (`ClientScreenMemory`): which screen the client shows, by the client's own
   screen names: the login form, home, the loading screen, the score screen, another menu, or a
-  match. It also says whether the client is signed in (false on the login form, true on home).
+  match. It also says whether the client is signed in (false on the login form, true on home),
+  and reads the MVP and awards screen at the end of a match (`Awards`) from the client's UI frame
+  tree.
 
 Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
 process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
@@ -152,6 +154,21 @@ loading screen's frame is gone, and the sample reads `Match`. A loading screen c
 (`MapLoading`) only after that process has shown a menu or a match, because the boot splash is the
 same screen. Measured on 2.57.0.98348: home `0x6181`, the login form `0x60C1`, the boot splash
 `0x20`.
+
+### How the awards screen is read
+
+The MVP and awards screen is in-game UI, not a menu screen. The client's UI frames form one tree
+above the menu root (`CRoot`, then a `CLayer` per UI, then `CGlueUI` or `CGameUI`). Each frame keeps
+its parent at `+0x50`, its visible bit in the byte at `+0x48`, and its children as an intrusive list
+(first child node at `+0x40`, the child's node at `+0x18`, the next sibling's node at `+0x20`, a
+tagged end). The frame classes carry no RTTI locator, but each one's vtable slot `0x240` is
+`IsA(type)`, which calls the class's static type accessor, which loads the class name
+(`FrameClass`). So the reader walks the tree once, names each distinct vtable once, and keeps the
+`CEndOfGameAwardsPanel` frame. It exists for the whole match (flags `0x7A`) and turns visible on the
+MVP screen (`0x7B`): measured on 2.57.0.98348, replay 65823392, 2026-10-08. The tree has about
+115,000 frames in a match; a full walk takes about 0.6 s and is repeated at most every 5 s while the
+panel is missing. Because the panel exists only in a match, a reader that starts mid-match reads
+`Match` rather than `Unknown`.
 
 ## Probe
 

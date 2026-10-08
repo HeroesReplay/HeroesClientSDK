@@ -22,7 +22,11 @@ public enum ClientScreenKind
     /// <summary><c>ScreenLoading</c>: the boot splash or a map loading screen.</summary>
     Loading,
 
-    /// <summary><c>ScreenLoginUnified</c>: the email and password form. Not signed in.</summary>
+    /// <summary>
+    /// <c>ScreenLoginUnified</c>: the login screen. Not signed in yet: either Battle.net
+    /// authentication is still connecting (a client Battle.net started, for a few seconds) or it
+    /// shows the email and password form (a client started without SSO).
+    /// </summary>
     Login,
 
     /// <summary><c>ScreenHome</c>: the signed-in home screen.</summary>
@@ -33,6 +37,11 @@ public enum ClientScreenKind
 
     /// <summary>Another menu screen (collection, replays, a hero, the store...).</summary>
     Menu,
+
+    /// <summary>
+    /// The MVP and awards screen at the end of a match (`EndOfGameAwardsPanel`, in-game UI).
+    /// </summary>
+    Awards,
 }
 
 /// <summary>One read of the client's menu screens.</summary>
@@ -78,7 +87,10 @@ public readonly record struct ClientScreenSample(
     /// <summary>True on the home screen, false on any other known screen, null when unknown.</summary>
     public bool? Home => Known ? Screen == ClientScreenKind.Home : null;
 
-    /// <summary>True on the login form, false on any other known screen, null when unknown.</summary>
+    /// <summary>
+    /// True on the login screen (authenticating or the email and password form), false on any
+    /// other known screen, null when unknown.
+    /// </summary>
     public bool? LoginForm => Known ? Screen == ClientScreenKind.Login : null;
 
     /// <summary>True on the loading screen, false on any other known screen, null when unknown.</summary>
@@ -86,6 +98,11 @@ public readonly record struct ClientScreenSample(
 
     /// <summary>True on the score screen, false on any other known screen, null when unknown.</summary>
     public bool? ScoreScreen => Known ? Screen == ClientScreenKind.Score : null;
+
+    /// <summary>
+    /// True on the MVP and awards screen, false on any other known screen, null when unknown.
+    /// </summary>
+    public bool? AwardsScreen => Known ? Screen == ClientScreenKind.Awards : null;
 
     /// <summary>
     /// False on the login form, true on the home screen (which only a signed-in client reaches),
@@ -111,6 +128,7 @@ public readonly record struct ClientScreenSample(
 public sealed class ClientScreenMemory : IDisposable
 {
     private static readonly TimeSpan RediscoverAfter = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan PanelWalkInterval = TimeSpan.FromSeconds(5);
 
     private IntPtr handle;
     private int attachedPid;
@@ -125,6 +143,10 @@ public sealed class ClientScreenMemory : IDisposable
     private List<string> names = new();
     private bool screenSeen;
     private bool menuSeen;
+    private readonly Panel awardsPanel = new("CEndOfGameAwardsPanel");
+    private readonly Dictionary<long, string> classes = new();
+    private long panelTop;
+    private DateTimeOffset nextPanelWalk;
     private DateTimeOffset rediscoverAt;
     private string reason = "no-process";
 
@@ -137,6 +159,79 @@ public sealed class ClientScreenMemory : IDisposable
     internal int FramesOffset => offsets.Frames;
 
     internal IReadOnlyList<string> ScreenNames => names;
+
+    internal long AwardsVtable => awardsPanel.Vtable;
+
+    /// <summary>A UI panel the read looks for by its class name, with its vtable and frame.</summary>
+    private sealed class Panel
+    {
+        public Panel(string name) => Name = name;
+
+        public string Name { get; }
+
+        public long Vtable { get; set; }
+
+        public long Frame { get; set; }
+
+        public void Reset()
+        {
+            Vtable = 0;
+            Frame = 0;
+        }
+    }
+
+    /// <summary>
+    /// Finds the awards panel in the frame tree by its class name, at most every 5 s while it is
+    /// missing, and drops a cached frame whose vtable changed (destroyed and reused). Class names
+    /// are resolved once per vtable (<see cref="FrameClass"/>).
+    /// </summary>
+    private void LocatePanels(Func<long, byte[], bool> read, long root)
+    {
+        if (
+            awardsPanel.Frame != 0
+            && (!TryReadPointer(read, awardsPanel.Frame, out long vt) || vt != awardsPanel.Vtable)
+        )
+        {
+            awardsPanel.Frame = 0;
+        }
+
+        if (awardsPanel.Frame != 0 || UtcNow() < nextPanelWalk)
+        {
+            return;
+        }
+
+        nextPanelWalk = UtcNow() + PanelWalkInterval;
+        panelTop = FrameTree.Top(read, root);
+        (long frame, long vtable) = FrameTree.FindFirst(
+            read,
+            panelTop,
+            candidate => ClassOf(read, candidate) == awardsPanel.Name
+        );
+        awardsPanel.Frame = frame;
+        awardsPanel.Vtable = vtable;
+    }
+
+    private string ClassOf(Func<long, byte[], bool> read, long vtable)
+    {
+        if (!classes.TryGetValue(vtable, out string name))
+        {
+            name = FrameClass.Name(read, vtable, moduleBase, moduleSize);
+            classes[vtable] = name;
+        }
+
+        return name;
+    }
+
+    /// <summary>Null when the panel is not known or not found; else whether it shows.</summary>
+    private bool? PanelShown(Func<long, byte[], bool> read, Panel panel)
+    {
+        if (panel.Vtable == 0 || panel.Frame == 0)
+        {
+            return null;
+        }
+
+        return FrameTree.Shown(read, panel.Frame, panelTop);
+    }
 
     /// <summary>
     /// Reads the menu screens of <paramref name="process"/>. A new process (pid and start time)
@@ -201,9 +296,18 @@ public sealed class ClientScreenMemory : IDisposable
 
             if (frame == 0)
             {
+                // The awards panel exists only in a match, and shows at its end.
+                LocatePanels(read, root);
+                if (PanelShown(read, awardsPanel) == true)
+                {
+                    menuSeen = true;
+                    return Sample(ClientScreenKind.Awards, "awards", clientVersion);
+                }
+
                 // A client that is still starting has no frames yet either. Only after it has
-                // shown a screen do missing frames mean the menus were torn down for a match.
-                if (!screenSeen)
+                // shown a screen, or while the in-game awards panel exists, do missing frames
+                // mean the menus were torn down for a match.
+                if (!screenSeen && awardsPanel.Frame == 0)
                 {
                     return Sample(ClientScreenKind.Unknown, "starting", clientVersion);
                 }
@@ -235,6 +339,15 @@ public sealed class ClientScreenMemory : IDisposable
         }
 
         ClientScreenKind kind = Classify(shown);
+        if (kind is not (ClientScreenKind.Loading or ClientScreenKind.Login))
+        {
+            LocatePanels(read, root);
+            if (PanelShown(read, awardsPanel) == true)
+            {
+                kind = ClientScreenKind.Awards;
+            }
+        }
+
         if (shown.Count > 0)
         {
             screenSeen = true;
@@ -248,7 +361,12 @@ public sealed class ClientScreenMemory : IDisposable
         return new ClientScreenSample(
             kind,
             shown,
-            kind == ClientScreenKind.NoScreen ? "no-screen" : "screens",
+            kind switch
+            {
+                ClientScreenKind.NoScreen => "no-screen",
+                ClientScreenKind.Awards => "awards",
+                _ => "screens",
+            },
             Version(),
             Mismatch(clientVersion),
             menuSeen
@@ -348,6 +466,10 @@ public sealed class ClientScreenMemory : IDisposable
         names = new List<string>();
         screenSeen = false;
         menuSeen = false;
+        awardsPanel.Reset();
+        classes.Clear();
+        panelTop = 0;
+        nextPanelWalk = default;
         rediscoverAt = default;
     }
 
