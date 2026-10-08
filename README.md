@@ -10,8 +10,8 @@ Read-only access to a running Heroes of the Storm client's memory on Windows:
 - **Menu screens** (`ClientScreenMemory`): which screen the client shows, by the client's own
   screen names: the login form, home, the loading screen, the score screen, another menu, or a
   match. It also says whether the client is signed in (false on the login form, true on home),
-  and reads two UI panels from the client's frame tree: the MVP and awards screen at the end of a
-  match (`Awards`) and the game data download panel (`Download`).
+  and reads the MVP and awards screen at the end of a match (`Awards`) from the client's UI frame
+  tree.
 
 Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
 process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
@@ -155,16 +155,19 @@ loading screen's frame is gone, and the sample reads `Match`. A loading screen c
 same screen. Measured on 2.57.0.98348: home `0x6181`, the login form `0x60C1`, the boot splash
 `0x20`.
 
-### How the awards and download panels are read
+### How the awards screen is read
 
-The client's UI frames form one tree above the menu root. Each frame keeps its parent at `+0x50`,
-its visible bit in the byte at `+0x48`, and its children as an intrusive list (first child node at
-`+0x40`, the child's node at `+0x18`, the next sibling's node at `+0x20`, a tagged end). A panel is
-found by its frame type: the client registers `EndOfGameAwardsPanel` and `DownloadPanel` with a
-factory whose constructor stores the class's vtable, so `FrameTypeLocator` follows the
-registration to the vtable and `FrameTree` finds the frame with it (the awards panel is about
-6,600 frames into an in-game tree of 86,000, 17 ms). A panel shows when it and every frame above it
-are visible. The awards panel exists for the whole match, so a reader that starts mid-match reads
+The MVP and awards screen is in-game UI, not a menu screen. The client's UI frames form one tree
+above the menu root (`CRoot`, then a `CLayer` per UI, then `CGlueUI` or `CGameUI`). Each frame keeps
+its parent at `+0x50`, its visible bit in the byte at `+0x48`, and its children as an intrusive list
+(first child node at `+0x40`, the child's node at `+0x18`, the next sibling's node at `+0x20`, a
+tagged end). The frame classes carry no RTTI locator, but each one's vtable slot `0x240` is
+`IsA(type)`, which calls the class's static type accessor, which loads the class name
+(`FrameClass`). So the reader walks the tree once, names each distinct vtable once, and keeps the
+`CEndOfGameAwardsPanel` frame. It exists for the whole match (flags `0x7A`) and turns visible on the
+MVP screen (`0x7B`): measured on 2.57.0.98348, replay 65823392, 2026-10-08. The tree has about
+115,000 frames in a match; a full walk takes about 0.6 s and is repeated at most every 5 s while the
+panel is missing. Because the panel exists only in a match, a reader that starts mid-match reads
 `Match` rather than `Unknown`.
 
 ## Probe

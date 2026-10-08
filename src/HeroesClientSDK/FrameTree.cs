@@ -40,25 +40,24 @@ internal static class FrameTree
     }
 
     /// <summary>
-    /// Depth-first search from <paramref name="top"/> for frames whose vtable is one of
-    /// <paramref name="vtables"/>. Returns the first frame found for each vtable.
+    /// Depth-first search from <paramref name="top"/> for the first frame whose vtable
+    /// <paramref name="match"/> accepts. Returns the frame and its vtable, or zeros.
     /// </summary>
-    public static Dictionary<long, long> Find(
+    public static (long Frame, long Vtable) FindFirst(
         Func<long, byte[], bool> read,
         long top,
-        IReadOnlyCollection<long> vtables
+        Func<long, bool> match
     )
     {
-        var found = new Dictionary<long, long>();
-        if (top == 0 || vtables == null || vtables.Count == 0)
+        if (top == 0 || match == null)
         {
-            return found;
+            return (0, 0);
         }
 
         var stack = new Stack<(long Frame, int Depth)>();
         stack.Push((top, 0));
         int visited = 0;
-        while (stack.Count > 0 && visited < MaxFrames && found.Count < vtables.Count)
+        while (stack.Count > 0 && visited < MaxFrames)
         {
             (long frame, int depth) = stack.Pop();
             visited++;
@@ -67,12 +66,9 @@ internal static class FrameTree
                 continue;
             }
 
-            foreach (long wanted in vtables)
+            if (vtable != 0 && match(vtable))
             {
-                if (vtable == wanted && !found.ContainsKey(wanted))
-                {
-                    found[wanted] = frame;
-                }
+                return (frame, vtable);
             }
 
             if (depth >= MaxDepth || !TryPointer(read, frame + FirstChildOffset, out long node))
@@ -98,7 +94,7 @@ internal static class FrameTree
             }
         }
 
-        return found;
+        return (0, 0);
     }
 
     /// <summary>
@@ -150,117 +146,101 @@ internal static class FrameTree
 }
 
 /// <summary>
-/// Finds the vtable of a UI frame class from the client's frame-type registration, so no build
-/// needs it listed. The client registers each frame type as
-/// <c>lea rcx,[name]; lea rax,[factory]</c>; the factory allocates and tail-jumps to the
-/// constructor (<c>jmp ctor</c>), and the constructor stores the vtable right after the base
-/// constructor (<c>call base; lea rax,[vtable]</c>). Measured for <c>EndOfGameAwardsPanel</c>
-/// (98348 vtable RVA 0x2674F68, 98304 0x267BF68) and <c>DownloadPanel</c> (98348 0x2740510,
-/// 98304 0x2747510).
+/// Names a UI frame's C++ class from its vtable, so no build needs class or vtable lists. The
+/// frame classes carry no RTTI locator, but every one implements <c>IsA(type)</c> in the vtable
+/// slot at <see cref="IsASlot"/>, and that function first calls the class's static type
+/// accessor, which loads the class name: <c>call StaticType</c>, then in StaticType
+/// <c>lea rcx,[name]</c>. Measured on 2.57.0.98348 and 2.57.0.98304: <c>CGlueUI</c>,
+/// <c>CRoot</c>, <c>CScreenLoading</c>, <c>CStandardDialog</c>, <c>CLoginDialog</c>,
+/// <c>CGameMenuDialog</c>, <c>CLabel</c>, <c>CImage</c>.
 /// </summary>
-internal static class FrameTypeLocator
+internal static class FrameClass
 {
-    public const int Width = 14;
-    private const int FactoryScan = 64;
-    private const int ConstructorScan = 64;
+    public const long IsASlot = 0x240;
+    private const int CodeScan = 64;
+    private const int StaticTypeScan = 96;
+    private const int MaxName = 80;
 
-    /// <summary>The RVA of each "name\0" that starts a string in the data section.</summary>
-    public static List<long> NameRvas(byte[] data, long dataRva, string name)
-    {
-        var rvas = new List<long>();
-        byte[] needle = Encoding.ASCII.GetBytes(name + "\0");
-        int at = data.AsSpan().IndexOf(needle);
-        while (at >= 0)
-        {
-            if (at == 0 || data[at - 1] == 0)
-            {
-                rvas.Add(dataRva + at);
-            }
-
-            int next = data.AsSpan(at + 1).IndexOf(needle);
-            at = next < 0 ? -1 : at + 1 + next;
-        }
-
-        return rvas;
-    }
-
-    /// <summary>
-    /// Registration sites in a code chunk: <c>48 8D 0D [name] 48 8D 05 [factory]</c> whose name is
-    /// one of <paramref name="names"/>. Returns (name RVA, factory RVA) pairs.
-    /// </summary>
-    public static List<(long Name, long Factory)> FindRegistrations(
-        ReadOnlySpan<byte> code,
-        long codeRva,
-        IReadOnlyCollection<long> names
+    /// <summary>The class name, or null when the code does not have this shape.</summary>
+    public static string Name(
+        Func<long, byte[], bool> read,
+        long vtable,
+        long moduleBase,
+        long moduleSize
     )
     {
-        var found = new List<(long, long)>();
-        for (int i = 0; i + Width <= code.Length; i++)
+        bool InModule(long address) => address >= moduleBase && address < moduleBase + moduleSize;
+        if (!InModule(vtable))
         {
-            if (
-                code[i] != 0x48
-                || code[i + 1] != 0x8D
-                || code[i + 2] != 0x0D
-                || code[i + 7] != 0x48
-                || code[i + 8] != 0x8D
-                || code[i + 9] != 0x05
-            )
-            {
-                continue;
-            }
+            return null;
+        }
 
-            long name = codeRva + i + 7 + BitConverter.ToInt32(code.Slice(i + 3, 4));
-            foreach (long wanted in names)
+        byte[] slot = new byte[8];
+        if (!read(vtable + IsASlot, slot))
+        {
+            return null;
+        }
+
+        long isA = BitConverter.ToInt64(slot, 0);
+        byte[] code = new byte[CodeScan];
+        if (!InModule(isA) || !read(isA, code))
+        {
+            return null;
+        }
+
+        long staticType = FirstCall(code, isA);
+        byte[] accessor = new byte[StaticTypeScan];
+        if (!InModule(staticType) || !read(staticType, accessor))
+        {
+            return null;
+        }
+
+        long name = FirstLeaRcx(accessor, staticType);
+        byte[] text = new byte[MaxName];
+        if (!InModule(name) || !read(name, text))
+        {
+            return null;
+        }
+
+        int length = Array.IndexOf(text, (byte)0);
+        if (length < 2)
+        {
+            return null;
+        }
+
+        for (int i = 0; i < length; i++)
+        {
+            if (text[i] < 0x20 || text[i] >= 0x7F)
             {
-                if (name == wanted)
-                {
-                    long factory = codeRva + i + 14 + BitConverter.ToInt32(code.Slice(i + 10, 4));
-                    found.Add((name, factory));
-                }
+                return null;
             }
         }
 
-        return found;
+        return Encoding.ASCII.GetString(text, 0, length);
     }
 
-    /// <summary>The constructor the factory tail-jumps to (<c>E9 rel32</c>), or 0.</summary>
-    public static long Constructor(ReadOnlySpan<byte> factory, long factoryRva)
+    /// <summary>The target of the first <c>call rel32</c>, or 0.</summary>
+    public static long FirstCall(ReadOnlySpan<byte> code, long address)
     {
-        for (int i = 0; i + 5 <= factory.Length && i < FactoryScan; i++)
+        for (int i = 0; i + 5 <= code.Length; i++)
         {
-            if (factory[i] == 0xE9)
+            if (code[i] == 0xE8)
             {
-                return factoryRva + i + 5 + BitConverter.ToInt32(factory.Slice(i + 1, 4));
+                return address + i + 5 + BitConverter.ToInt32(code.Slice(i + 1, 4));
             }
         }
 
         return 0;
     }
 
-    /// <summary>
-    /// The vtable the constructor stores first: the first <c>lea rax,[rip+x]</c> after the first
-    /// <c>call</c>, or 0.
-    /// </summary>
-    public static long Vtable(ReadOnlySpan<byte> constructor, long constructorRva)
+    /// <summary>The target of the first <c>lea rcx,[rip+x]</c>, or 0.</summary>
+    public static long FirstLeaRcx(ReadOnlySpan<byte> code, long address)
     {
-        bool called = false;
-        for (int i = 0; i + 7 <= constructor.Length && i < ConstructorScan; i++)
+        for (int i = 0; i + 7 <= code.Length; i++)
         {
-            if (!called && constructor[i] == 0xE8)
+            if (code[i] == 0x48 && code[i + 1] == 0x8D && code[i + 2] == 0x0D)
             {
-                called = true;
-                i += 4;
-                continue;
-            }
-
-            if (
-                called
-                && constructor[i] == 0x48
-                && constructor[i + 1] == 0x8D
-                && constructor[i + 2] == 0x05
-            )
-            {
-                return constructorRva + i + 7 + BitConverter.ToInt32(constructor.Slice(i + 3, 4));
+                return address + i + 7 + BitConverter.ToInt32(code.Slice(i + 3, 4));
             }
         }
 

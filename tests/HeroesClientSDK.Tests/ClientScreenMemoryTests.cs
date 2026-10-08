@@ -496,51 +496,50 @@ internal sealed class FakeGlueClient
     // node +0x40, a child's node at +0x18 and its next sibling node at +0x20, and a tagged end.
     public const long Top = 0x5_0000_0000L;
     public const long MenuContainer = 0x5_0000_1000L;
-    public const long EndGamePanel = 0x5_0000_2000L;
+    public const long GameUi = 0x5_0000_2000L;
     public const long AwardsPanel = 0x5_0000_3000L;
-    public const long DownloadPanel = 0x5_0000_4000L;
     public const long AwardsVtableRva = RdataRva + 0x3800;
-    public const long DownloadVtableRva = RdataRva + 0x3900;
     private readonly Dictionary<long, byte[]> heap = new();
 
     /// <summary>
-    /// The frame-type registrations, factories and constructors for the two panels, as the
-    /// client has them (recorded shapes from 2.57.0.98348), and the frame tree above the menus.
+    /// The frame tree above the menus with the in-game awards panel, and the code that names its
+    /// class: vtable slot 0x240 is IsA, which calls the class's StaticType, which loads the name
+    /// (recorded shapes from 2.57.0.98348).
     /// </summary>
     public void AddPanels()
     {
-        WriteName(0x3000, "EndOfGameAwardsPanel");
-        WriteName(0x3040, "CDownloadPanel");
-        WriteName(0x3060, "DownloadPanel");
-        WriteRegistration(0x600, RdataRva + 0x3000, 0x700, 0x800, AwardsVtableRva);
-        WriteRegistration(0x900, RdataRva + 0x3060, 0xA00, 0xB00, DownloadVtableRva);
+        WriteName(0x3000, "CEndOfGameAwardsPanel");
+        // vtable[0x240] -> IsA at text 0x700: push rbx; sub rsp,20h; mov rbx,rdx; call StaticType.
+        BitConverter.GetBytes(Base + TextRva + 0x700).CopyTo(rdata, 0x3800 + 0x240);
+        byte[] isA = ClientScreenMemoryTests.Hex("40 53 48 83 EC 20 48 8B DA E8 00 00 00 00");
+        BitConverter.GetBytes(0x800 - (0x700 + 9 + 5)).CopyTo(isA, 10);
+        Array.Copy(isA, 0, text, 0x700, isA.Length);
+        // StaticType at text 0x800: ... lea rcx,[name].
+        byte[] staticType = ClientScreenMemoryTests.Hex(
+            "40 53 48 83 EC 30 8B 05 3C 3F A9 02 A8 01 75 65 83 C8 01 48 C7 44 24 28 0E 00 00 00 48 8D 0D 00 00 00 00"
+        );
+        BitConverter
+            .GetBytes((int)(RdataRva + 0x3000 - (TextRva + 0x800 + 0x1C + 7)))
+            .CopyTo(staticType, 0x1F);
+        Array.Copy(staticType, 0, text, 0x800, staticType.Length);
 
-        foreach (
-            long frame in new[] { Top, MenuContainer, EndGamePanel, AwardsPanel, DownloadPanel }
-        )
+        foreach (long frame in new[] { Top, MenuContainer, GameUi, AwardsPanel })
         {
             heap[frame] = new byte[0x100];
+            heap[frame][0x48] = 0x7B;
         }
 
-        Link(Top, MenuContainer, EndGamePanel);
-        Link(EndGamePanel, AwardsPanel);
-        Link(MenuContainer, DownloadPanel);
+        Link(Top, MenuContainer, GameUi);
+        Link(GameUi, AwardsPanel);
         BitConverter.GetBytes(MenuContainer).CopyTo(root, 0x50);
         BitConverter.GetBytes(Base + AwardsVtableRva).CopyTo(heap[AwardsPanel], 0);
-        BitConverter.GetBytes(Base + DownloadVtableRva).CopyTo(heap[DownloadPanel], 0);
-        foreach (long frame in new[] { Top, MenuContainer, AwardsPanel })
-        {
-            heap[frame][0x48] = 0x53;
-        }
-
-        ShowEndGame(false);
-        ShowDownload(false);
+        ShowAwards(false);
     }
 
-    /// <summary>2.57.0.98304, 2026-10-08: the end game panel is 0x7A in a match.</summary>
-    public void ShowEndGame(bool shown) => heap[EndGamePanel][0x48] = (byte)(shown ? 0x7B : 0x7A);
-
-    public void ShowDownload(bool shown) => heap[DownloadPanel][0x48] = (byte)(shown ? 0x53 : 0x52);
+    /// <summary>
+    /// 2.57.0.98348, 2026-10-08: the awards panel is 0x7A in the match and 0x7B on the MVP screen.
+    /// </summary>
+    public void ShowAwards(bool shown) => heap[AwardsPanel][0x48] = (byte)(shown ? 0x7B : 0x7A);
 
     private void Link(long parent, params long[] children)
     {
@@ -558,33 +557,6 @@ internal sealed class FakeGlueClient
     {
         byte[] bytes = Encoding.ASCII.GetBytes(name + "\0");
         Array.Copy(bytes, 0, rdata, at, bytes.Length);
-    }
-
-    /// <summary>
-    /// `lea rcx,[name]; lea rax,[factory]`, a factory that tail-jumps to the constructor, and a
-    /// constructor that stores the vtable after the base constructor (2.57.0.98348 bytes).
-    /// </summary>
-    private void WriteRegistration(int at, long nameRva, int factory, int ctor, long vtableRva)
-    {
-        long site = TextRva + at;
-        byte[] lea = ClientScreenMemoryTests.Hex("48 8D 0D 00 00 00 00 48 8D 05 00 00 00 00");
-        BitConverter.GetBytes((int)(nameRva - (site + 7))).CopyTo(lea, 3);
-        BitConverter.GetBytes((int)(TextRva + factory - (site + 14))).CopyTo(lea, 10);
-        Array.Copy(lea, 0, text, at, lea.Length);
-
-        byte[] factoryBytes = ClientScreenMemoryTests.Hex(
-            "40 53 48 83 EC 20 48 8B D9 B9 C0 02 00 00 E8 7D 27 BD 00 48 85 C0 74 10 48 8B D3 48 8B C8 48 83 C4 20 5B E9 00 00 00 00 48 83 C4 20 5B C3"
-        );
-        BitConverter.GetBytes(ctor - (factory + 0x23 + 5)).CopyTo(factoryBytes, 0x24);
-        Array.Copy(factoryBytes, 0, text, factory, factoryBytes.Length);
-
-        byte[] ctorBytes = ClientScreenMemoryTests.Hex(
-            "40 53 48 83 EC 20 48 8B D9 E8 E2 0D CE 00 48 8D 05 00 00 00 00 C6 83 B8 02 00 00 20 48 89 03"
-        );
-        BitConverter
-            .GetBytes((int)(vtableRva - (TextRva + ctor + 0x0E + 7)))
-            .CopyTo(ctorBytes, 0x11);
-        Array.Copy(ctorBytes, 0, text, ctor, ctorBytes.Length);
     }
 
     private static bool Copy(long start, byte[] source, long address, byte[] buffer)

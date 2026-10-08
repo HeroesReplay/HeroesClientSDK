@@ -42,13 +42,6 @@ public enum ClientScreenKind
     /// The MVP and awards screen at the end of a match (`EndOfGameAwardsPanel`, in-game UI).
     /// </summary>
     Awards,
-
-    /// <summary>
-    /// The game data download panel (`DownloadPanel`): "All data files must be fully downloaded
-    /// to load this version of the game", shown by the newest client while HeroesSwitcher hands a
-    /// replay of an older build over.
-    /// </summary>
-    Download,
 }
 
 /// <summary>One read of the client's menu screens.</summary>
@@ -112,12 +105,6 @@ public readonly record struct ClientScreenSample(
     public bool? AwardsScreen => Known ? Screen == ClientScreenKind.Awards : null;
 
     /// <summary>
-    /// True while the game data download panel shows, false on any other known screen, null when
-    /// unknown.
-    /// </summary>
-    public bool? Downloading => Known ? Screen == ClientScreenKind.Download : null;
-
-    /// <summary>
     /// False on the login form, true on the home screen (which only a signed-in client reaches),
     /// null otherwise.
     /// </summary>
@@ -156,8 +143,8 @@ public sealed class ClientScreenMemory : IDisposable
     private List<string> names = new();
     private bool screenSeen;
     private bool menuSeen;
-    private readonly Panel awardsPanel = new("EndOfGameAwardsPanel");
-    private readonly Panel downloadPanel = new("DownloadPanel");
+    private readonly Panel awardsPanel = new("CEndOfGameAwardsPanel");
+    private readonly Dictionary<long, string> classes = new();
     private long panelTop;
     private DateTimeOffset nextPanelWalk;
     private DateTimeOffset rediscoverAt;
@@ -175,9 +162,7 @@ public sealed class ClientScreenMemory : IDisposable
 
     internal long AwardsVtable => awardsPanel.Vtable;
 
-    internal long DownloadVtable => downloadPanel.Vtable;
-
-    /// <summary>A UI panel the read looks for by its frame type, with its vtable and frame.</summary>
+    /// <summary>A UI panel the read looks for by its class name, with its vtable and frame.</summary>
     private sealed class Panel
     {
         public Panel(string name) => Name = name;
@@ -196,48 +181,45 @@ public sealed class ClientScreenMemory : IDisposable
     }
 
     /// <summary>
-    /// Finds the panels in the frame tree, at most every 5 s while one is missing, and drops a
-    /// cached frame whose vtable changed (destroyed and reused).
+    /// Finds the awards panel in the frame tree by its class name, at most every 5 s while it is
+    /// missing, and drops a cached frame whose vtable changed (destroyed and reused). Class names
+    /// are resolved once per vtable (<see cref="FrameClass"/>).
     /// </summary>
     private void LocatePanels(Func<long, byte[], bool> read, long root)
     {
-        var wanted = new List<long>();
-        foreach (Panel panel in new[] { awardsPanel, downloadPanel })
+        if (
+            awardsPanel.Frame != 0
+            && (!TryReadPointer(read, awardsPanel.Frame, out long vt) || vt != awardsPanel.Vtable)
+        )
         {
-            if (panel.Vtable == 0)
-            {
-                continue;
-            }
-
-            if (
-                panel.Frame != 0
-                && (!TryReadPointer(read, panel.Frame, out long vt) || vt != panel.Vtable)
-            )
-            {
-                panel.Frame = 0;
-            }
-
-            if (panel.Frame == 0)
-            {
-                wanted.Add(panel.Vtable);
-            }
+            awardsPanel.Frame = 0;
         }
 
-        if (wanted.Count == 0 || UtcNow() < nextPanelWalk)
+        if (awardsPanel.Frame != 0 || UtcNow() < nextPanelWalk)
         {
             return;
         }
 
         nextPanelWalk = UtcNow() + PanelWalkInterval;
         panelTop = FrameTree.Top(read, root);
-        Dictionary<long, long> found = FrameTree.Find(read, panelTop, wanted);
-        foreach (Panel panel in new[] { awardsPanel, downloadPanel })
+        (long frame, long vtable) = FrameTree.FindFirst(
+            read,
+            panelTop,
+            candidate => ClassOf(read, candidate) == awardsPanel.Name
+        );
+        awardsPanel.Frame = frame;
+        awardsPanel.Vtable = vtable;
+    }
+
+    private string ClassOf(Func<long, byte[], bool> read, long vtable)
+    {
+        if (!classes.TryGetValue(vtable, out string name))
         {
-            if (panel.Frame == 0 && found.TryGetValue(panel.Vtable, out long frame))
-            {
-                panel.Frame = frame;
-            }
+            name = FrameClass.Name(read, vtable, moduleBase, moduleSize);
+            classes[vtable] = name;
         }
+
+        return name;
     }
 
     /// <summary>Null when the panel is not known or not found; else whether it shows.</summary>
@@ -360,11 +342,7 @@ public sealed class ClientScreenMemory : IDisposable
         if (kind is not (ClientScreenKind.Loading or ClientScreenKind.Login))
         {
             LocatePanels(read, root);
-            if (PanelShown(read, downloadPanel) == true)
-            {
-                kind = ClientScreenKind.Download;
-            }
-            else if (PanelShown(read, awardsPanel) == true)
+            if (PanelShown(read, awardsPanel) == true)
             {
                 kind = ClientScreenKind.Awards;
             }
@@ -386,7 +364,6 @@ public sealed class ClientScreenMemory : IDisposable
             kind switch
             {
                 ClientScreenKind.NoScreen => "no-screen",
-                ClientScreenKind.Download => "download",
                 ClientScreenKind.Awards => "awards",
                 _ => "screens",
             },
@@ -490,7 +467,7 @@ public sealed class ClientScreenMemory : IDisposable
         screenSeen = false;
         menuSeen = false;
         awardsPanel.Reset();
-        downloadPanel.Reset();
+        classes.Clear();
         panelTop = 0;
         nextPanelWalk = default;
         rediscoverAt = default;
@@ -506,40 +483,9 @@ public sealed class ClientScreenMemory : IDisposable
             return;
         }
 
-        // The read-only data first: the screen table, and the frame type names to look for.
-        List<string> table = new();
-        var panelNames = new Dictionary<long, Panel>();
-        ModuleSection rdata = default;
-        foreach (ModuleSection section in sections)
-        {
-            if (section.Executable || section.Name != ".rdata")
-            {
-                continue;
-            }
-
-            rdata = section;
-            byte[] data = ModuleScanner.ReadSection(read, moduleBase, section);
-            table = GlueScreenTable.Find(data, section.VirtualAddress, moduleBase, moduleSize);
-            foreach (Panel panel in new[] { awardsPanel, downloadPanel })
-            {
-                foreach (
-                    long name in FrameTypeLocator.NameRvas(data, section.VirtualAddress, panel.Name)
-                )
-                {
-                    panelNames[name] = panel;
-                }
-            }
-
-            break;
-        }
-
         var globals = new List<long>();
         var sites = new List<GlueScreenPattern.Offsets>();
-        var registrations = new List<(long Name, long Factory)>();
-        int overlap = Math.Max(
-            Math.Max(LoadingScreenPattern.Width, GlueScreenPattern.Width),
-            FrameTypeLocator.Width
-        );
+        int overlap = Math.Max(LoadingScreenPattern.Width, GlueScreenPattern.Width);
         foreach (ModuleSection section in sections)
         {
             if (!section.Executable)
@@ -556,12 +502,6 @@ public sealed class ClientScreenMemory : IDisposable
                 {
                     globals.AddRange(LoadingScreenPattern.Find(slice, rva));
                     sites.AddRange(GlueScreenPattern.Find(slice));
-                    if (panelNames.Count > 0)
-                    {
-                        registrations.AddRange(
-                            FrameTypeLocator.FindRegistrations(slice, rva, panelNames.Keys)
-                        );
-                    }
                 }
             );
         }
@@ -583,54 +523,32 @@ public sealed class ClientScreenMemory : IDisposable
             return;
         }
 
+        List<string> table = new();
+        foreach (ModuleSection section in sections)
+        {
+            if (section.Executable || section.Name != ".rdata")
+            {
+                continue;
+            }
+
+            byte[] data = ModuleScanner.ReadSection(read, moduleBase, section);
+            table = GlueScreenTable.Find(data, section.VirtualAddress, moduleBase, moduleSize);
+            if (table.Count > 0)
+            {
+                break;
+            }
+        }
+
         if (table.Count == 0)
         {
             reason = "no-screen-table";
             return;
         }
 
-        // The panels are optional: without them the screens still read, and the awards and
-        // download screens read as the screen under them.
-        foreach ((long name, long factory) in registrations)
-        {
-            Panel panel = panelNames[name];
-            long vtable = PanelVtable(read, factory, rdata);
-            if (vtable != 0 && panel.Vtable == 0)
-            {
-                panel.Vtable = vtable;
-            }
-        }
-
         globalRva = rva;
         offsets = found;
         names = table;
         reason = "pattern";
-    }
-
-    /// <summary>
-    /// The vtable a frame factory's constructor stores, as an address, or 0 when the code does
-    /// not have the expected shape or the vtable is not in the read-only data.
-    /// </summary>
-    private long PanelVtable(Func<long, byte[], bool> read, long factoryRva, ModuleSection rdata)
-    {
-        byte[] factory = new byte[64];
-        if (factoryRva <= 0 || !read(moduleBase + factoryRva, factory))
-        {
-            return 0;
-        }
-
-        long constructorRva = FrameTypeLocator.Constructor(factory, factoryRva);
-        byte[] constructor = new byte[64];
-        if (constructorRva <= 0 || !read(moduleBase + constructorRva, constructor))
-        {
-            return 0;
-        }
-
-        long vtableRva = FrameTypeLocator.Vtable(constructor, constructorRva);
-        bool inData =
-            vtableRva >= rdata.VirtualAddress
-            && vtableRva < rdata.VirtualAddress + rdata.VirtualSize;
-        return inData ? moduleBase + vtableRva : 0;
     }
 
     /// <summary>
