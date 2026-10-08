@@ -2,16 +2,15 @@
 
 Read-only access to a running Heroes of the Storm client's memory on Windows:
 
-- **Match clock** (`StableMatchClock`): the in-game match time, read from the client's tick
-  counter. It is found per client build from the clock instruction pattern, so a new patch does
-  not need new addresses. Build `2.55.17.98025` also has fixed addresses as a fallback.
-- **Screen state** (`LoadingScreenMemory`): whether the client shows a menu, a loading screen
-  (boot splash or map loading), or a match.
-- **Menu screens** (`ClientScreenMemory`): which screen the client shows, by the client's own
-  screen names: the login form, home, the loading screen, the score screen, another menu, or a
-  match. It also says whether the client is signed in (false on the login form, true on home),
-  and reads the MVP and awards screen at the end of a match (`Awards`) from the client's UI frame
-  tree.
+- **Match clock** (`MatchClock`): the in-game match time, read from the client's tick counter.
+  It is found per client build from the clock instruction pattern, so a new patch does not need
+  new addresses. Build `2.55.17.98025` also has fixed addresses as a fallback (its build profile).
+- **Loading screen** (`LoadingScreen`): whether the client shows a menu, a loading screen (boot
+  splash or map loading), or a match.
+- **Menu screens** (`ClientScreen`): which screen the client shows, by the client's own screen
+  names: the login form, home, the loading screen, the score screen, another menu, or a match. It
+  also says whether the client is signed in (false on the login form, true on home), and reads the
+  MVP and awards screen at the end of a match (`Awards`) from the client's UI frame tree.
 
 Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
 process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
@@ -31,7 +30,7 @@ GitHub Packages.
 Download the file into a local folder, check its SHA-256, and map the package to that folder:
 
 ```powershell
-$version = '0.1.0'
+$version = '0.4.0'
 New-Item -ItemType Directory -Force .packages | Out-Null
 Invoke-WebRequest "https://github.com/HeroesReplay/HeroesClientSDK/releases/download/v$version/HeroesClientSDK.$version.nupkg" -OutFile ".packages/HeroesClientSDK.$version.nupkg"
 (Get-FileHash ".packages/HeroesClientSDK.$version.nupkg" -Algorithm SHA256).Hash   # compare with the release notes
@@ -68,7 +67,7 @@ repo. In GitHub Actions, the job needs `packages: read`, and the package must gr
 repository read access.
 
 ```powershell
-dotnet add package HeroesClientSDK --version 0.1.0
+dotnet add package HeroesClientSDK --version 0.4.0
 ```
 
 ## Usage
@@ -81,11 +80,11 @@ using HeroesClientSDK;
 
 Process client = Process.GetProcessesByName("HeroesOfTheStorm_x64")[0];
 
-using var clock = new StableMatchClock();
-StableClockSample sample = clock.Read(client);
-if (sample.Ok)
+using var clock = new MatchClock();
+MatchClockSample sample = clock.Read(client);
+if (sample.Time is TimeSpan time)
 {
-    Console.WriteLine($"Match time {TimeSpan.FromSeconds(sample.Seconds):mm\\:ss}");
+    Console.WriteLine($"Match time {time:mm\\:ss}");
 }
 else
 {
@@ -94,43 +93,105 @@ else
 }
 
 // A match is running only when two reads 250 ms apart move forward.
-TimeSpan? running = await StableMatchClock.ReadRunningAsync(
+TimeSpan? running = await MatchClock.ReadRunningAsync(
     () => clock.Read(client),
-    () => Task.Delay(StableMatchClock.RunningProbe)
+    () => Task.Delay(MatchClock.RunningProbe)
 );
 
-using var screens = new LoadingScreenMemory();
+using var screens = new LoadingScreen();
 LoadingScreenSample screen = screens.Read(client);
 Console.WriteLine($"{screen.Screen} (menu seen: {screen.MenuSeen}, map loading: {screen.MapLoading})");
 
 // The client version is optional. Pass one only to be told when the running exe is another build.
-using var menus = new ClientScreenMemory();
-ClientScreenSample menu = menus.Read(client);
-// Home, Login, Loading, Score, Menu, Match, NoScreen or Unknown, plus the screens shown
+using var menus = new ClientScreen();
+ClientScreenSample menu = menus.Read(client, HeroesClientVersion.TryParse("2.57.0.98348"));
+// Home, Login, Loading, Score, Awards, Menu, Match, NoScreen or Unknown, plus the screens shown
 Console.WriteLine($"{menu.Screen} [{string.Join(", ", menu.Shown)}] signed in: {menu.SignedIn}");
+if (menu.VersionMismatch)
+{
+    Console.WriteLine($"The running exe is {menu.ClientVersion}");
+}
 ```
 
-Keep one `StableMatchClock`, one `LoadingScreenMemory` and one `ClientScreenMemory` per client for the life of your watcher. Each
-reader starts over by itself when it sees a new client process (pid and start time), and
-retries a failed pattern scan every 10 seconds while a fresh client is still unpacking its code.
+Keep one `MatchClock`, one `LoadingScreen` and one `ClientScreen` per client for the life of your
+watcher. Each reader starts over by itself when it sees a new client process (pid and start time),
+and retries a failed pattern scan every 10 seconds while a fresh client is still unpacking its
+code.
+
+### The API in one table
+
+| Type | What it is |
+| --- | --- |
+| `MatchClock`, `LoadingScreen`, `ClientScreen` | The readers. Each has `Read(Process process, HeroesClientVersion clientVersion = null)` and `Read(HeroesClientProcess client, HeroesClientVersion clientVersion = null)`. |
+| `MatchClockSample`, `LoadingScreenSample`, `ClientScreenSample` | One read each. Every sample has `Ok`, `Reason`, `ClientVersion` (the running exe, or null) and `VersionMismatch`. |
+| `HeroesClientProcess` | One client attached read-only. `Attach(Process)` never throws and says `Ok` and `Reason` (`no-process`, `open-failed`, `no-module`), with `Module` and `DetectedVersion`. Pass it to every reader to share one handle. `FromMemory(IProcessMemory, ClientModule)` serves a fake or recorded memory instead of a process. |
+| `IProcessMemory` | `TryRead(address, buffer)`: the only thing a reader needs from a client. Implement it for tests. |
+| `HeroesClientOptions` | Optional reader settings: `Profiles` and `TimeProvider`. |
+| `BuildProfileRegistry`, `BuildProfile` | Per-build data, looked up by the running exe's build: exact build, then patch line (`2.57`), then `Fallback`. Immutable. `Default` holds the generic profile and the fixed clock of `2.55.17.98025`. |
+| `HeroesClientVersion` | A client build: `TryParse`, `FromFile`, `PatchLine`, comparable. |
+| `MatchClockTelemetry` | Where clock discovery stands (`discovering`, `memory-locked`, `memory-unlocked`), from `MatchClock.LastTelemetry`. |
+
+To read one client with all three readers on one handle, or a client served from memory in a test:
+
+```csharp
+using HeroesClientProcess attached = HeroesClientProcess.Attach(client);
+if (!attached.Ok)
+{
+    Console.WriteLine($"Not attached: {attached.Reason}"); // no-process, open-failed, no-module
+}
+
+MatchClockSample now = clock.Read(attached);
+ClientScreenSample shown = menus.Read(attached);
+
+// In a test: any IProcessMemory, with the module it serves.
+using HeroesClientProcess fake = HeroesClientProcess.FromMemory(
+    myFakeMemory,
+    new ClientModule(ProcessId: 1, BaseAddress: 0x140000000, Size: 0x4000000, FileVersion: "2.57.0.98348")
+);
+```
 
 ### Any client build, any number of clients
 
 The SDK must work with whatever Heroes of the Storm builds are installed, side by side. These
 rules hold for every release:
 
-- **No version is required.** No API needs the client version. When a later API accepts one, it
-  is optional (`HeroesClientVersion? clientVersion = null`, or an options type with a nullable
-  `ClientVersion`); null means detect it from the process, or use the generic path.
+- **No version is required.** No API needs the client version. Every read takes an optional one
+  (`HeroesClientVersion? clientVersion = null`). It is an expectation: when the running exe is
+  another build, the sample says `VersionMismatch`, and per-build data still follows the running
+  exe. A passed version picks the build profile only when the exe has no readable version.
 - **An unknown or different build never throws.** Reads find the clock and the screen state
   from instruction patterns, so a new build works without new addresses. A build the patterns do
   not match reads as not ok with a reason (`unsupported-build`, `pattern-disagreed`), never an
   exception. Per-build data (today only the fixed addresses of `2.55.17.98025`) is used only when
   the running exe is that build, and only after the pattern scan.
 - **A version mismatch is reported, not thrown.**
-- **Several clients at once.** Readers keep no static or global client state. Use one reader per
-  client process to read several processes, or several builds, at the same time. A single reader
-  pointed at a different process starts over for that process.
+- **Several clients at once.** Readers keep no static or global client state, and a
+  `BuildProfileRegistry` is an immutable instance passed in options. Use one reader per client
+  process to read several processes, or several builds, at the same time. A single reader pointed
+  at a different process starts over for that process.
+
+### Moving from 0.3 to 0.4
+
+0.4 renames the public API so that every reader, sample and option follows one pattern
+(HeroesClientSDK#7). The 0.3 names marked obsolete below still compile for one release and forward
+to the 0.4 types.
+
+| 0.3 | 0.4 |
+| --- | --- |
+| `StableMatchClock` (obsolete) | `MatchClock` |
+| `StableClockSample` (obsolete) | `MatchClockSample`, plus `Time`, `ClientVersion` and `VersionMismatch` |
+| `ClockTelemetryReport`, `ClockTelemetry` (obsolete) | `MatchClockTelemetry` (`Discovering`, `Locked`, `Unlocked`, with the same strings). `ClockTelemetry.Changed(a, b)` is `a != b`. |
+| `LoadingScreenMemory` (obsolete) | `LoadingScreen` |
+| `ClientScreen` (the enum) | `LoadingScreenKind`. The name `ClientScreen` now belongs to the menu-screen reader, so the enum has no shim. |
+| `LoadingScreenSample` | The same name, plus `Ok`, `ClientVersion` and `VersionMismatch` |
+| `ClientScreenMemory` (obsolete) | `ClientScreen` |
+| `ClientScreenSample(Screen, Shown, Reason, ClientVersion, VersionMismatch, MenuSeen)` | `ClientScreenSample(Screen, Shown, MenuSeen, Reason, ClientVersion = null, VersionMismatch = false)` |
+| `ClientScreenSample.Known`, `.Home`, `.LoginForm`, `.Loading`, `.ScoreScreen`, `.AwardsScreen` (obsolete) | `.Ok`, `.OnHome`, `.OnLogin`, `.OnLoading`, `.OnScore`, `.OnAwards` |
+| `Read(Process)` | `Read(Process, HeroesClientVersion clientVersion = null)` and `Read(HeroesClientProcess, ...)` |
+
+A main module that cannot be read yet now reads `no-module` on every reader, or `no-process` when
+the process has exited. Before 0.4 the clock said `unsupported-build` there and the screen readers
+said `no-process`.
 
 ### How the clock is trusted
 
@@ -140,8 +201,9 @@ rules hold for every release:
   seconds is a new match in the same client.
 - Zero (the menu and the loading screen) reads `near-zero`, never ok.
 
-`LastTelemetry` reports where discovery stands (`discovering`, `memory-locked`,
-`memory-unlocked`) and changes only when the state or reason does, so it is cheap to log.
+`MatchClock.LastTelemetry` reports where discovery stands (`discovering`, `memory-locked`,
+`memory-unlocked`) with the reason of the last read. Two reports are equal when the state and
+the reason are, so a caller that logs on `!=` logs each change once.
 
 ### How the menu screens are read
 
@@ -179,7 +241,8 @@ dotnet run --project tools/HeroesClientSDK.Probe -c Release -- --watch 250
 ```
 
 Each line has the build, the menu screen and the screens shown, the signed-in state, the loading
-screen reader, and the match clock. `--version 2.57.0.98304` reports a client that is another build.
+screen reader, and the match clock. The three readers share one `HeroesClientProcess` per client.
+`--version 2.57.0.98304` reports a client that is another build.
 
 ## Build
 
@@ -192,6 +255,8 @@ dotnet pack src/HeroesClientSDK -c Release -o artifacts
 ```
 
 ## Releases
+
+What changed in each release is in [CHANGELOG.md](CHANGELOG.md).
 
 Versions come from git tags (`vX.Y.Z`, MinVer). Pushing a tag runs `publish.yml`, which builds,
 tests, and packs that version, pushes it to GitHub Packages, and attaches the same `.nupkg` to the
