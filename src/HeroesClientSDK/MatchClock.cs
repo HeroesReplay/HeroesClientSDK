@@ -19,53 +19,40 @@ namespace HeroesClientSDK;
 /// <param name="Seconds">
 /// Match time in seconds: <paramref name="Ticks"/> times <paramref name="Scale"/>.
 /// </param>
-public readonly record struct StableClockSample(
+/// <param name="ClientVersion">The build of the running exe, or null when unknown.</param>
+/// <param name="VersionMismatch">
+/// True when the caller passed a version and the running exe is another build. Reading
+/// continues; nothing throws.
+/// </param>
+public readonly record struct MatchClockSample(
     bool Ok,
     string Reason,
-    int Ticks,
-    float Scale,
-    double Seconds
-);
-
-/// <summary>
-/// One client process as the memory readers see it. <paramref name="StartedAt"/> (UTC ticks, 0
-/// when it cannot be read) tells a relaunch apart from the same process even if Windows hands
-/// the new client the old pid and the same image base, so every per-process cache resets.
-/// </summary>
-internal readonly record struct StableClockModule(
-    int ProcessId,
-    long BaseAddress,
-    long Size,
-    string FileVersion,
-    long StartedAt = 0
+    int Ticks = 0,
+    float Scale = 0,
+    double Seconds = 0,
+    HeroesClientVersion ClientVersion = null,
+    bool VersionMismatch = false
 )
 {
-    /// <summary>The process start time in UTC ticks, or 0 when Windows does not give it.</summary>
-    public static long StartTicks(Process process)
-    {
-        try
-        {
-            return process?.StartTime.ToUniversalTime().Ticks ?? 0;
-        }
-        catch (Exception)
-        {
-            return 0;
-        }
-    }
+    /// <summary>The match time of an ok read, null otherwise.</summary>
+    public TimeSpan? Time => Ok ? TimeSpan.FromSeconds(Seconds) : null;
 }
 
 /// <summary>
 /// Read-only match clock. Pattern discovery runs once per process module on every client build.
-/// Fixed 98025 RVAs are only a candidate; a failed check stays unlocked and reports no clock.
-/// This is the only match clock. The HUD timer is never cropped or OCR'd.
+/// A build's fixed addresses (<see cref="BuildProfile.FixedClock"/>, today only 2.55.17.98025)
+/// are only a candidate after the pattern; a failed check stays unlocked and reports no clock.
+/// This is the only match clock. The HUD timer is never cropped or OCR'd. Keep one per client
+/// process; it starts over by itself on a new process (pid and start time).
 /// </summary>
-public sealed class StableMatchClock : IDisposable
+public sealed class MatchClock : IDisposable
 {
     private const double MaxCoherentStepSeconds = 8;
     private static readonly TimeSpan RediscoverAfter = TimeSpan.FromSeconds(10);
 
-    private IntPtr handle;
-    private int attachedPid;
+    private readonly ProcessAttachment attachment = new();
+    private readonly BuildProfileRegistry profiles;
+    private readonly TimeProvider time;
     private bool fingerprintSet;
     private int pid;
     private long startedAt;
@@ -83,106 +70,126 @@ public sealed class StableMatchClock : IDisposable
     private double lastOkSeconds = double.NaN;
     private DateTimeOffset lastOkChange;
     private DateTimeOffset rediscoverAt;
-    private string attachReason = "no-process";
-    private ClockTelemetryReport lastReport;
+    private string discoveryReason = "no-process";
+    private MatchClockTelemetry lastReport;
     private int telemetryEmissions;
+    private HeroesClientVersion readVersion;
+    private bool readMismatch;
+
+    /// <summary>A clock with <paramref name="options"/>, or the defaults when null.</summary>
+    public MatchClock(HeroesClientOptions options = null)
+    {
+        profiles = options?.Profiles ?? BuildProfileRegistry.Default;
+        time = options?.TimeProvider ?? TimeProvider.System;
+    }
 
     /// <summary>
-    /// The discovery state and reason of the last read (see <see cref="ClockTelemetry"/>).
+    /// Gap between the two reads that prove the clock is moving. The clock counts ticks / 4096
+    /// per second, so a running match is about a quarter second ahead on the second read.
     /// </summary>
-    public ClockTelemetryReport LastTelemetry { get; private set; }
+    public static readonly TimeSpan RunningProbe = TimeSpan.FromMilliseconds(250);
 
-    internal ClockTelemetryReport DiscoveryTelemetry { get; private set; }
+    /// <summary>
+    /// The discovery state and reason of the last read (see <see cref="MatchClockTelemetry"/>).
+    /// </summary>
+    public MatchClockTelemetry LastTelemetry { get; private set; }
+
+    internal MatchClockTelemetry DiscoveryTelemetry { get; private set; }
 
     internal int TelemetryEmissions => telemetryEmissions;
-
-    internal Func<DateTimeOffset> UtcNow { get; set; } = () => DateTimeOffset.UtcNow;
 
     internal bool IsLocked => located;
 
     internal long CandidateTickRva => tickRva;
 
-    internal bool TryRead(Process process, out TimeSpan time)
-    {
-        StableClockSample sample = Read(process);
-        if (!sample.Ok)
-        {
-            time = default;
-            return false;
-        }
-
-        time = TimeSpan.FromSeconds(sample.Seconds);
-        return true;
-    }
-
     /// <summary>
     /// Reads the match clock of <paramref name="process"/>. A new process (pid and start time)
-    /// starts discovery over.
+    /// starts discovery over. <paramref name="clientVersion"/> is optional: when it is given and
+    /// the running exe is another build, the sample says so and reading continues.
     /// </summary>
-    public StableClockSample Read(Process process)
+    public MatchClockSample Read(Process process, HeroesClientVersion clientVersion = null) =>
+        Read(attachment.For(process), clientVersion);
+
+    /// <summary>
+    /// Reads the match clock of an attached <paramref name="client"/> (one handle shared by every
+    /// reader, or a client from <see cref="HeroesClientProcess.FromMemory"/>). The client stays
+    /// the caller's.
+    /// </summary>
+    public MatchClockSample Read(
+        HeroesClientProcess client,
+        HeroesClientVersion clientVersion = null
+    )
     {
-        if (!TryAttach(process, out StableClockModule module))
+        if (client is null || !client.Ok)
         {
-            return new StableClockSample(false, attachReason, 0, 0, 0);
+            discoveryReason = client?.Reason ?? "no-process";
+            return new MatchClockSample(false, discoveryReason);
         }
 
-        return Read(module, ReadProcess);
+        return Read(client.Module, client.Memory, clientVersion);
     }
 
-    internal StableClockSample Read(StableClockModule module, Func<long, byte[], bool> read)
+    internal MatchClockSample Read(
+        ClientModule module,
+        IProcessMemory memory,
+        HeroesClientVersion clientVersion = null
+    )
     {
+        readVersion = HeroesClientVersion.TryParse(module.FileVersion);
+        readMismatch =
+            clientVersion is not null && readVersion is not null && readVersion != clientVersion;
         if (module.ProcessId <= 0)
         {
-            return Finish(new StableClockSample(false, "no-process", 0, 0, 0));
+            return Finish(new MatchClockSample(false, "no-process"));
         }
 
         if (module.BaseAddress <= 0 || module.Size <= 0)
         {
-            return Finish(new StableClockSample(false, "no-module", 0, 0, 0));
+            return Finish(new MatchClockSample(false, "no-module"));
         }
 
-        if (read == null)
+        if (memory == null)
         {
-            return Finish(new StableClockSample(false, "read-failed", 0, 0, 0));
+            return Finish(new MatchClockSample(false, "read-failed"));
         }
 
         UseModule(module);
-        if (!discovered || (tickRva == 0 && UtcNow() >= rediscoverAt))
+        if (!discovered || (tickRva == 0 && time.GetUtcNow() >= rediscoverAt))
         {
-            ReportTelemetry(attachReason);
-            Discover(read);
+            ReportTelemetry(discoveryReason);
+            Discover(memory, clientVersion);
         }
 
         if (tickRva == 0 || speedRva == 0)
         {
-            return Finish(new StableClockSample(false, attachReason, 0, 0, 0));
+            return Finish(new MatchClockSample(false, discoveryReason));
         }
 
         int ticks = 0;
         float speed = 0;
         if (
-            !TryReadInt32(read, moduleBase + tickRva, out ticks)
-            || !TryReadSingle(read, moduleBase + speedRva, out speed)
+            !TryReadInt32(memory, moduleBase + tickRva, out ticks)
+            || !TryReadSingle(memory, moduleBase + speedRva, out speed)
         )
         {
-            return Finish(new StableClockSample(false, "read-failed", ticks, speed, 0));
+            return Finish(new MatchClockSample(false, "read-failed", ticks, speed));
         }
 
         if (!MatchTickClock.TrySeconds(ticks, speed, out double seconds))
         {
             hasSample = false;
-            return Finish(new StableClockSample(false, "bad-scale", ticks, speed, seconds));
+            return Finish(new MatchClockSample(false, "bad-scale", ticks, speed, seconds));
         }
 
         // Zero is also the menu and the loading screen, so it is not a started match.
         if (Math.Abs(seconds) < 0.5)
         {
-            return Finish(new StableClockSample(false, "near-zero", ticks, speed, seconds));
+            return Finish(new MatchClockSample(false, "near-zero", ticks, speed, seconds));
         }
 
         if (!located && !TryConfirm(ticks, speed, seconds, out string reason))
         {
-            return Finish(new StableClockSample(false, reason, ticks, speed, seconds));
+            return Finish(new MatchClockSample(false, reason, ticks, speed, seconds));
         }
 
         // A clock that went back is a new match in the same client, not a frozen cell. Without
@@ -192,35 +199,35 @@ public sealed class StableMatchClock : IDisposable
             BeginMatch();
         }
 
-        if (SameCellIsStale(lastOkSeconds, seconds, lastOkChange, UtcNow()))
+        if (SameCellIsStale(lastOkSeconds, seconds, lastOkChange, time.GetUtcNow()))
         {
-            return Finish(new StableClockSample(false, "stalled", ticks, speed, seconds));
+            return Finish(new MatchClockSample(false, "stalled", ticks, speed, seconds));
         }
 
         if (double.IsNaN(lastOkSeconds) || seconds > lastOkSeconds + 0.25)
         {
             lastOkSeconds = seconds;
-            lastOkChange = UtcNow();
+            lastOkChange = time.GetUtcNow();
         }
 
-        return Finish(new StableClockSample(true, "ok", ticks, speed, seconds));
+        return Finish(new MatchClockSample(true, "ok", ticks, speed, seconds));
     }
 
-    private StableClockSample Finish(StableClockSample sample)
+    private MatchClockSample Finish(MatchClockSample sample)
     {
         ReportTelemetry(sample.Reason);
-        return sample;
+        return sample with { ClientVersion = readVersion, VersionMismatch = readMismatch };
     }
 
     private void ReportTelemetry(string reason)
     {
-        ClockTelemetryReport report = ClockTelemetry.Describe(discovered, located, reason);
+        MatchClockTelemetry report = MatchClockTelemetry.Describe(discovered, located, reason);
         if (!discovered)
         {
             DiscoveryTelemetry = report;
         }
 
-        if (ClockTelemetry.Changed(lastReport, report))
+        if (lastReport != report)
         {
             lastReport = report;
             telemetryEmissions++;
@@ -237,12 +244,6 @@ public sealed class StableMatchClock : IDisposable
         lastOkSeconds = double.NaN;
         lastOkChange = default;
     }
-
-    /// <summary>
-    /// Gap between the two reads that prove the clock is moving. The clock counts ticks / 4096
-    /// per second, so a running match is about a quarter second ahead on the second read.
-    /// </summary>
-    public static readonly TimeSpan RunningProbe = TimeSpan.FromMilliseconds(250);
 
     /// <summary>
     /// A match is running only when both reads succeed and the second is ahead of the first.
@@ -266,13 +267,13 @@ public sealed class StableMatchClock : IDisposable
     /// miss (the menu's zero, a stalled or unsupported clock) answers at once.
     /// </summary>
     public static async Task<TimeSpan?> ReadRunningAsync(
-        Func<StableClockSample> read,
+        Func<MatchClockSample> read,
         Func<Task> pause
     )
     {
         ArgumentNullException.ThrowIfNull(read);
         ArgumentNullException.ThrowIfNull(pause);
-        StableClockSample first = read();
+        MatchClockSample first = read();
         if (!first.Ok && StillConfirming(first.Reason))
         {
             await pause().ConfigureAwait(false);
@@ -285,7 +286,7 @@ public sealed class StableMatchClock : IDisposable
         }
 
         await pause().ConfigureAwait(false);
-        StableClockSample second = read();
+        MatchClockSample second = read();
         TimeSpan? running = second.Ok ? TimeSpan.FromSeconds(second.Seconds) : null;
         return IsRunning(TimeSpan.FromSeconds(first.Seconds), running) ? running : null;
     }
@@ -318,14 +319,14 @@ public sealed class StableMatchClock : IDisposable
         return now - changedAt >= TimeSpan.FromSeconds(8);
     }
 
-    /// <summary>Closes the process handle and forgets the located clock.</summary>
+    /// <summary>Closes the process handle this clock opened and forgets the located clock.</summary>
     public void Dispose()
     {
-        ReleaseHandle();
+        attachment.Dispose();
         ResetState();
     }
 
-    private void UseModule(StableClockModule module)
+    private void UseModule(ClientModule module)
     {
         string fileVersion = module.FileVersion ?? "";
         if (
@@ -362,11 +363,11 @@ public sealed class StableMatchClock : IDisposable
         BeginMatch();
     }
 
-    private void Discover(Func<long, byte[], bool> read)
+    private void Discover(IProcessMemory memory, HeroesClientVersion clientVersion)
     {
         discovered = true;
         // A client still unpacking its code has no pattern yet. A miss is scanned again later.
-        rediscoverAt = UtcNow() + RediscoverAfter;
+        rediscoverAt = time.GetUtcNow() + RediscoverAfter;
         located = false;
         tickRva = 0;
         speedRva = 0;
@@ -376,7 +377,7 @@ public sealed class StableMatchClock : IDisposable
         lastSampleAt = default;
 
         bool agreed = TryLocateByPattern(
-            read,
+            memory,
             out int sites,
             out long patternTick,
             out long patternSpeed
@@ -385,29 +386,32 @@ public sealed class StableMatchClock : IDisposable
         {
             tickRva = patternTick;
             speedRva = patternSpeed;
-            attachReason = "pattern";
+            discoveryReason = "pattern";
             return;
         }
 
+        // Per-build data follows the running exe; a passed version counts only when the exe has
+        // none. A build without fixed addresses has nothing after the pattern.
+        MatchClockAddresses? fixedClock = profiles.Resolve(readVersion ?? clientVersion).FixedClock;
         if (
-            MatchTickClock.IsSupportedVersion(version)
-            && InRange(MatchTickClock.MatchTickRva)
-            && InRange(MatchTickClock.GameSpeedFactorRva)
+            fixedClock is MatchClockAddresses known
+            && InRange(known.TickRva)
+            && InRange(known.SpeedRva)
         )
         {
-            tickRva = MatchTickClock.MatchTickRva;
-            speedRva = MatchTickClock.GameSpeedFactorRva;
-            attachReason = "fixed";
+            tickRva = known.TickRva;
+            speedRva = known.SpeedRva;
+            discoveryReason = "fixed";
             return;
         }
 
-        if (patternTick != 0 || patternSpeed != 0 || MatchTickClock.IsSupportedVersion(version))
+        if (patternTick != 0 || patternSpeed != 0 || fixedClock.HasValue)
         {
-            attachReason = "out-of-range";
+            discoveryReason = "out-of-range";
             return;
         }
 
-        attachReason = sites == 0 ? "unsupported-build" : "pattern-disagreed";
+        discoveryReason = sites == 0 ? "unsupported-build" : "pattern-disagreed";
     }
 
     private bool InRange(long rva)
@@ -417,7 +421,7 @@ public sealed class StableMatchClock : IDisposable
 
     private bool TryConfirm(int ticks, float scale, double seconds, out string reason)
     {
-        DateTimeOffset now = UtcNow();
+        DateTimeOffset now = time.GetUtcNow();
         if (!hasSample)
         {
             hasSample = true;
@@ -474,79 +478,8 @@ public sealed class StableMatchClock : IDisposable
         return Math.Abs(left - right) <= 0.000001f;
     }
 
-    private bool TryAttach(Process process, out StableClockModule module)
-    {
-        module = default;
-        if (process == null)
-        {
-            attachReason = "no-process";
-            return false;
-        }
-
-        int nextPid;
-        try
-        {
-            if (process.HasExited)
-            {
-                attachReason = "no-process";
-                return false;
-            }
-
-            nextPid = process.Id;
-        }
-        catch
-        {
-            attachReason = "no-process";
-            return false;
-        }
-
-        if (handle == IntPtr.Zero || attachedPid != nextPid)
-        {
-            ReleaseHandle();
-            handle = NativeMethods.OpenProcess(
-                NativeMethods.ProcessQueryInformation | NativeMethods.ProcessVmRead,
-                false,
-                nextPid
-            );
-            if (handle == IntPtr.Zero)
-            {
-                attachReason = "open-failed";
-                return false;
-            }
-
-            attachedPid = nextPid;
-        }
-
-        try
-        {
-            ProcessModule main = process.MainModule;
-            long baseAddress = main?.BaseAddress.ToInt64() ?? 0;
-            long size = main?.ModuleMemorySize ?? 0;
-            string fileVersion = main?.FileVersionInfo.FileVersion;
-            if (baseAddress == 0 || size <= 0)
-            {
-                attachReason = "no-module";
-                return false;
-            }
-
-            module = new StableClockModule(
-                nextPid,
-                baseAddress,
-                size,
-                fileVersion,
-                StableClockModule.StartTicks(process)
-            );
-            return true;
-        }
-        catch
-        {
-            attachReason = "unsupported-build";
-            return false;
-        }
-    }
-
     private bool TryLocateByPattern(
-        Func<long, byte[], bool> read,
+        IProcessMemory memory,
         out int sites,
         out long patternTick,
         out long patternSpeed
@@ -555,129 +488,61 @@ public sealed class StableMatchClock : IDisposable
         sites = 0;
         patternTick = 0;
         patternSpeed = 0;
-        byte[] headers = new byte[0x1000];
-        if (
-            !TryRead(read, moduleBase, headers)
-            || !MatchClockPattern.TryExecutableSections(headers, out var sections)
-        )
+        if (!ModuleScanner.TrySections(memory, moduleBase, moduleSize, out var sections))
         {
             return false;
         }
 
         var found = new List<MatchClockPattern.Site>();
-        foreach (MatchClockPattern.Section section in sections)
+        foreach (ModuleSection section in sections)
         {
-            if (section.VirtualSize <= 0 || section.VirtualAddress < 0)
+            if (!section.Executable)
             {
                 continue;
             }
 
-            if (moduleSize > 0 && section.VirtualAddress + section.VirtualSize > moduleSize)
-            {
-                continue;
-            }
-
-            CollectSites(read, moduleBase, section.VirtualAddress, section.VirtualSize, found);
+            ModuleScanner.WalkWhole(
+                memory,
+                moduleBase,
+                section,
+                MatchClockPattern.MulssEnd,
+                (slice, rva) => found.AddRange(MatchClockPattern.Find(slice, rva))
+            );
         }
 
         sites = found.Count;
         return MatchClockPattern.TryAgree(found, out patternTick, out patternSpeed);
     }
 
-    private static void CollectSites(
-        Func<long, byte[], bool> read,
-        long moduleBase,
-        long rva,
-        int size,
-        List<MatchClockPattern.Site> found
-    )
-    {
-        if (size <= 0 || size > 64 * 1024 * 1024)
-        {
-            return;
-        }
-
-        byte[] window = new byte[size];
-        if (TryRead(read, moduleBase + rva, window))
-        {
-            found.AddRange(MatchClockPattern.Find(window, rva));
-            return;
-        }
-
-        const int chunk = 1 << 20;
-        for (int offset = 0; offset < size; offset += chunk)
-        {
-            int count = Math.Min(size - offset, chunk + MatchClockPattern.MulssEnd);
-            byte[] slice = new byte[count];
-            if (!TryRead(read, moduleBase + rva + offset, slice))
-            {
-                continue;
-            }
-
-            found.AddRange(MatchClockPattern.Find(slice, rva + offset));
-        }
-    }
-
-    private static bool TryReadInt32(Func<long, byte[], bool> read, long address, out int value)
+    private static bool TryReadInt32(IProcessMemory memory, long address, out int value)
     {
         value = 0;
-        byte[] buffer = new byte[4];
-        if (!TryRead(read, address, buffer))
+        Span<byte> buffer = stackalloc byte[4];
+        if (!TryRead(memory, address, buffer))
         {
             return false;
         }
 
-        value = BitConverter.ToInt32(buffer, 0);
+        value = BitConverter.ToInt32(buffer);
         return true;
     }
 
-    private static bool TryReadSingle(Func<long, byte[], bool> read, long address, out float value)
+    private static bool TryReadSingle(IProcessMemory memory, long address, out float value)
     {
         value = 0;
-        byte[] buffer = new byte[4];
-        if (!TryRead(read, address, buffer))
+        Span<byte> buffer = stackalloc byte[4];
+        if (!TryRead(memory, address, buffer))
         {
             return false;
         }
 
-        value = BitConverter.ToSingle(buffer, 0);
+        value = BitConverter.ToSingle(buffer);
         return true;
     }
 
-    private static bool TryRead(Func<long, byte[], bool> read, long address, byte[] buffer)
+    private static bool TryRead(IProcessMemory memory, long address, Span<byte> buffer)
     {
-        return read != null
-            && address > 0
-            && buffer != null
-            && buffer.Length > 0
-            && read(address, buffer);
-    }
-
-    private bool ReadProcess(long address, byte[] buffer)
-    {
-        return handle != IntPtr.Zero
-            && address > 0
-            && buffer != null
-            && buffer.Length > 0
-            && NativeMethods.ReadProcessMemory(
-                handle,
-                (IntPtr)address,
-                buffer,
-                buffer.Length,
-                out int read
-            )
-            && read == buffer.Length;
-    }
-
-    private void ReleaseHandle()
-    {
-        if (handle != IntPtr.Zero)
-        {
-            NativeMethods.CloseHandle(handle);
-            handle = IntPtr.Zero;
-        }
-
-        attachedPid = 0;
+        return memory != null && address > 0 && !buffer.IsEmpty && memory.TryRead(address, buffer);
     }
 
     private void ResetState()
@@ -699,10 +564,12 @@ public sealed class StableMatchClock : IDisposable
         lastSampleAt = default;
         lastOkSeconds = double.NaN;
         lastOkChange = default;
-        attachReason = "no-process";
+        discoveryReason = "no-process";
         lastReport = default;
         DiscoveryTelemetry = default;
         LastTelemetry = default;
         telemetryEmissions = 0;
+        readVersion = null;
+        readMismatch = false;
     }
 }

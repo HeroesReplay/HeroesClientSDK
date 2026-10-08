@@ -5,8 +5,9 @@ This is the contract for coding agents in this repository. Code and this file wi
 ## Product
 
 HeroesClientSDK is read-only access to a running Heroes of the Storm client's memory on Windows:
-the match clock (`StableMatchClock`), the screen state (`LoadingScreenMemory`) and the menu screens
-(`ClientScreenMemory`). It is a `net10.0` library published as a NuGet package. Its main consumer is
+the match clock (`MatchClock`), the loading screen (`LoadingScreen`) and the menu screens
+(`ClientScreen`), on one read-only attachment per process (`HeroesClientProcess`). It is a
+`net10.0` library published as a NuGet package. Its main consumer is
 [HeroesReplay](https://github.com/HeroesReplay/HeroesReplay), which pins each release by version and
 SHA-256. The usage, the install, the build and the release steps are in [README.md](README.md).
 
@@ -26,11 +27,13 @@ SHA-256. The usage, the install, the build and the release steps are in [README.
    process. A new pid or process start time starts discovery over. Two clients of different builds
    (the switcher handoff, or a current and a previous patch) must read correctly side by side.
 3. **The version is optional.** No API requires a client version. Where one is accepted, it is
-   optional (`HeroesClientVersion? clientVersion = null`, or an options type with a nullable
-   `ClientVersion`); null means detect it from the process or use the generic path. An unknown
-   build, or a pattern that doesn't match, reads as not ok with a reason (`unsupported-build`,
+   optional (`HeroesClientVersion? clientVersion = null` on every read); null means detect it from
+   the process or use the generic path. Per-build data (`BuildProfileRegistry`) follows the running
+   exe; a passed version picks a profile only when the exe has no version. An unknown build, or a
+   pattern that doesn't match, reads as not ok with a reason (`unsupported-build`,
    `pattern-disagreed`, ...), never an exception. A different version passed in is reported as a
-   mismatch, not thrown. Per-build data is a fallback for that exact build, after the pattern scan.
+   mismatch (`VersionMismatch`), not thrown. Per-build data is a fallback for that exact build,
+   after the pattern scan.
 4. **No binaries committed.** Nothing from Blizzard goes into git: no exes, DLLs, memory images,
    CASC files, Ghidra projects, tree captures, `.jsonl` snapshots or decompiled listings. They live
    under `C:\heroesreplay\re\` (the `.gitignore` also ignores `re/`, `*.gpr`, `*.rep/`, `*.dmp`).

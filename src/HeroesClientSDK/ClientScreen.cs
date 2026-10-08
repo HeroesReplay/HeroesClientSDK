@@ -50,27 +50,30 @@ public enum ClientScreenKind
 /// The names of every screen the client shows, such as <c>ScreenHome</c> with the hero
 /// backgrounds around it. Empty when none is shown or memory cannot tell.
 /// </param>
-/// <param name="Reason">
-/// Why, for example "screens", "match", "no-screen", "no-state", "unsupported-build".
-/// </param>
-/// <param name="ClientVersion">The version of the running exe, or null when unknown.</param>
-/// <param name="VersionMismatch">
-/// True when the caller passed a version and the running exe is a different build. Reading
-/// continues; nothing throws.
-/// </param>
 /// <param name="MenuSeen">
 /// True once this client process has shown a screen other than the loading screen (the login
 /// form, home, or another menu), or a match.
 /// </param>
+/// <param name="Reason">
+/// Why, for example "screens", "match", "no-screen", "no-state", "unsupported-build".
+/// </param>
+/// <param name="ClientVersion">The build of the running exe, or null when unknown.</param>
+/// <param name="VersionMismatch">
+/// True when the caller passed a version and the running exe is another build. Reading
+/// continues; nothing throws.
+/// </param>
 public readonly record struct ClientScreenSample(
     ClientScreenKind Screen,
     IReadOnlyList<string> Shown,
+    bool MenuSeen,
     string Reason,
-    HeroesClientVersion ClientVersion,
-    bool VersionMismatch,
-    bool MenuSeen = false
+    HeroesClientVersion ClientVersion = null,
+    bool VersionMismatch = false
 )
 {
+    /// <summary>True when memory can tell which screen this is.</summary>
+    public bool Ok => Screen != ClientScreenKind.Unknown;
+
     /// <summary>
     /// True on a map loading screen, false on any other known screen, null when memory cannot
     /// tell. The boot splash is the same loading screen, so a loading screen counts as a map
@@ -78,31 +81,28 @@ public readonly record struct ClientScreenSample(
     /// </summary>
     public bool? MapLoading =>
         Screen == ClientScreenKind.Loading ? (MenuSeen ? true : null)
-        : Known ? false
+        : Ok ? false
         : null;
 
-    /// <summary>True when memory can tell which screen this is.</summary>
-    public bool Known => Screen != ClientScreenKind.Unknown;
-
     /// <summary>True on the home screen, false on any other known screen, null when unknown.</summary>
-    public bool? Home => Known ? Screen == ClientScreenKind.Home : null;
+    public bool? OnHome => Is(ClientScreenKind.Home);
 
     /// <summary>
     /// True on the login screen (authenticating or the email and password form), false on any
     /// other known screen, null when unknown.
     /// </summary>
-    public bool? LoginForm => Known ? Screen == ClientScreenKind.Login : null;
+    public bool? OnLogin => Is(ClientScreenKind.Login);
 
     /// <summary>True on the loading screen, false on any other known screen, null when unknown.</summary>
-    public bool? Loading => Known ? Screen == ClientScreenKind.Loading : null;
+    public bool? OnLoading => Is(ClientScreenKind.Loading);
 
     /// <summary>True on the score screen, false on any other known screen, null when unknown.</summary>
-    public bool? ScoreScreen => Known ? Screen == ClientScreenKind.Score : null;
+    public bool? OnScore => Is(ClientScreenKind.Score);
 
     /// <summary>
     /// True on the MVP and awards screen, false on any other known screen, null when unknown.
     /// </summary>
-    public bool? AwardsScreen => Known ? Screen == ClientScreenKind.Awards : null;
+    public bool? OnAwards => Is(ClientScreenKind.Awards);
 
     /// <summary>
     /// False on the login form, true on the home screen (which only a signed-in client reaches),
@@ -112,6 +112,32 @@ public readonly record struct ClientScreenSample(
         Screen == ClientScreenKind.Login ? false
         : Screen == ClientScreenKind.Home ? true
         : null;
+
+    /// <summary>Obsolete: use <see cref="Ok"/>.</summary>
+    [Obsolete("Use Ok. Removed after 0.4.")]
+    public bool Known => Ok;
+
+    /// <summary>Obsolete: use <see cref="OnHome"/>.</summary>
+    [Obsolete("Use OnHome. Removed after 0.4.")]
+    public bool? Home => OnHome;
+
+    /// <summary>Obsolete: use <see cref="OnLogin"/>.</summary>
+    [Obsolete("Use OnLogin. Removed after 0.4.")]
+    public bool? LoginForm => OnLogin;
+
+    /// <summary>Obsolete: use <see cref="OnLoading"/>.</summary>
+    [Obsolete("Use OnLoading. Removed after 0.4.")]
+    public bool? Loading => OnLoading;
+
+    /// <summary>Obsolete: use <see cref="OnScore"/>.</summary>
+    [Obsolete("Use OnScore. Removed after 0.4.")]
+    public bool? ScoreScreen => OnScore;
+
+    /// <summary>Obsolete: use <see cref="OnAwards"/>.</summary>
+    [Obsolete("Use OnAwards. Removed after 0.4.")]
+    public bool? AwardsScreen => OnAwards;
+
+    private bool? Is(ClientScreenKind kind) => Ok ? Screen == kind : null;
 }
 
 /// <summary>
@@ -123,15 +149,16 @@ public readonly record struct ClientScreenSample(
 /// own template table (<see cref="GlueScreenTable"/>), so no build needs an index list. Measured
 /// on 2.57.0.98348: home shows <c>ScreenHome</c> with <c>ScreenBackgroundHero</c>,
 /// <c>ScreenHeroCutscene</c>, <c>ScreenNavigationHero</c> and <c>ScreenForegroundHero</c>
-/// (mask 0x6181).
+/// (mask 0x6181). Keep one per client process; it starts over by itself on a new process (pid
+/// and start time).
 /// </summary>
-public sealed class ClientScreenMemory : IDisposable
+public sealed class ClientScreen : IDisposable
 {
     private static readonly TimeSpan RediscoverAfter = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan PanelWalkInterval = TimeSpan.FromSeconds(5);
 
-    private IntPtr handle;
-    private int attachedPid;
+    private readonly ProcessAttachment attachment = new();
+    private readonly TimeProvider time;
     private int pid;
     private long startedAt;
     private long moduleBase;
@@ -150,7 +177,14 @@ public sealed class ClientScreenMemory : IDisposable
     private DateTimeOffset rediscoverAt;
     private string reason = "no-process";
 
-    internal Func<DateTimeOffset> UtcNow { get; set; } = () => DateTimeOffset.UtcNow;
+    /// <summary>
+    /// A reader with <paramref name="options"/>, or the defaults when null. The menu screens need
+    /// no per-build data: the offsets and the screen names come from the client itself.
+    /// </summary>
+    public ClientScreen(HeroesClientOptions options = null)
+    {
+        time = options?.TimeProvider ?? TimeProvider.System;
+    }
 
     internal long GlobalRva => globalRva;
 
@@ -185,37 +219,37 @@ public sealed class ClientScreenMemory : IDisposable
     /// missing, and drops a cached frame whose vtable changed (destroyed and reused). Class names
     /// are resolved once per vtable (<see cref="FrameClass"/>).
     /// </summary>
-    private void LocatePanels(Func<long, byte[], bool> read, long root)
+    private void LocatePanels(IProcessMemory memory, long root)
     {
         if (
             awardsPanel.Frame != 0
-            && (!TryReadPointer(read, awardsPanel.Frame, out long vt) || vt != awardsPanel.Vtable)
+            && (!TryReadPointer(memory, awardsPanel.Frame, out long vt) || vt != awardsPanel.Vtable)
         )
         {
             awardsPanel.Frame = 0;
         }
 
-        if (awardsPanel.Frame != 0 || UtcNow() < nextPanelWalk)
+        if (awardsPanel.Frame != 0 || time.GetUtcNow() < nextPanelWalk)
         {
             return;
         }
 
-        nextPanelWalk = UtcNow() + PanelWalkInterval;
-        panelTop = FrameTree.Top(read, root);
+        nextPanelWalk = time.GetUtcNow() + PanelWalkInterval;
+        panelTop = FrameTree.Top(memory, root);
         (long frame, long vtable) = FrameTree.FindFirst(
-            read,
+            memory,
             panelTop,
-            candidate => ClassOf(read, candidate) == awardsPanel.Name
+            candidate => ClassOf(memory, candidate) == awardsPanel.Name
         );
         awardsPanel.Frame = frame;
         awardsPanel.Vtable = vtable;
     }
 
-    private string ClassOf(Func<long, byte[], bool> read, long vtable)
+    private string ClassOf(IProcessMemory memory, long vtable)
     {
         if (!classes.TryGetValue(vtable, out string name))
         {
-            name = FrameClass.Name(read, vtable, moduleBase, moduleSize);
+            name = FrameClass.Name(memory, vtable, moduleBase, moduleSize);
             classes[vtable] = name;
         }
 
@@ -223,14 +257,14 @@ public sealed class ClientScreenMemory : IDisposable
     }
 
     /// <summary>Null when the panel is not known or not found; else whether it shows.</summary>
-    private bool? PanelShown(Func<long, byte[], bool> read, Panel panel)
+    private bool? PanelShown(IProcessMemory memory, Panel panel)
     {
         if (panel.Vtable == 0 || panel.Frame == 0)
         {
             return null;
         }
 
-        return FrameTree.Shown(read, panel.Frame, panelTop);
+        return FrameTree.Shown(memory, panel.Frame, panelTop);
     }
 
     /// <summary>
@@ -238,37 +272,48 @@ public sealed class ClientScreenMemory : IDisposable
     /// starts discovery over. <paramref name="clientVersion"/> is optional: when it is given and
     /// the running exe is another build, the sample says so and reading continues.
     /// </summary>
-    public ClientScreenSample Read(Process process, HeroesClientVersion clientVersion = null)
-    {
-        if (!TryAttach(process, out StableClockModule module))
-        {
-            return new ClientScreenSample(
-                ClientScreenKind.Unknown,
-                Array.Empty<string>(),
-                reason,
-                null,
-                false
-            );
-        }
+    public ClientScreenSample Read(Process process, HeroesClientVersion clientVersion = null) =>
+        Read(attachment.For(process), clientVersion);
 
-        return Read(module, ReadProcess, clientVersion);
-    }
-
-    internal ClientScreenSample Read(
-        StableClockModule module,
-        Func<long, byte[], bool> read,
+    /// <summary>
+    /// Reads the menu screens of an attached <paramref name="client"/> (one handle shared by
+    /// every reader, or a client from <see cref="HeroesClientProcess.FromMemory"/>). The client
+    /// stays the caller's.
+    /// </summary>
+    public ClientScreenSample Read(
+        HeroesClientProcess client,
         HeroesClientVersion clientVersion = null
     )
     {
-        if (module.ProcessId <= 0 || module.BaseAddress <= 0 || module.Size <= 0 || read == null)
+        if (client is null || !client.Ok)
+        {
+            reason = client?.Reason ?? "no-process";
+            return new ClientScreenSample(
+                ClientScreenKind.Unknown,
+                Array.Empty<string>(),
+                false,
+                reason
+            );
+        }
+
+        return Read(client.Module, client.Memory, clientVersion);
+    }
+
+    internal ClientScreenSample Read(
+        ClientModule module,
+        IProcessMemory memory,
+        HeroesClientVersion clientVersion = null
+    )
+    {
+        if (module.ProcessId <= 0 || module.BaseAddress <= 0 || module.Size <= 0 || memory == null)
         {
             return Sample(ClientScreenKind.Unknown, "no-module", clientVersion);
         }
 
         UseModule(module);
-        if (!discovered || (!Ready && UtcNow() >= rediscoverAt))
+        if (!discovered || (!Ready && time.GetUtcNow() >= rediscoverAt))
         {
-            Discover(read);
+            Discover(memory);
         }
 
         if (!Ready)
@@ -276,7 +321,7 @@ public sealed class ClientScreenMemory : IDisposable
             return Sample(ClientScreenKind.Unknown, reason, clientVersion);
         }
 
-        if (!TryReadPointer(read, moduleBase + globalRva, out long root))
+        if (!TryReadPointer(memory, moduleBase + globalRva, out long root))
         {
             return Sample(ClientScreenKind.Unknown, "read-failed", clientVersion);
         }
@@ -289,7 +334,7 @@ public sealed class ClientScreenMemory : IDisposable
         int loadingIndex = names.IndexOf("ScreenLoading");
         if (loadingIndex >= 0)
         {
-            if (!TryReadPointer(read, root + offsets.Frames + 8L * loadingIndex, out long frame))
+            if (!TryReadPointer(memory, root + offsets.Frames + 8L * loadingIndex, out long frame))
             {
                 return Sample(ClientScreenKind.Unknown, "read-failed", clientVersion);
             }
@@ -297,8 +342,8 @@ public sealed class ClientScreenMemory : IDisposable
             if (frame == 0)
             {
                 // The awards panel exists only in a match, and shows at its end.
-                LocatePanels(read, root);
-                if (PanelShown(read, awardsPanel) == true)
+                LocatePanels(memory, root);
+                if (PanelShown(memory, awardsPanel) == true)
                 {
                     menuSeen = true;
                     return Sample(ClientScreenKind.Awards, "awards", clientVersion);
@@ -318,7 +363,7 @@ public sealed class ClientScreenMemory : IDisposable
         }
 
         byte[] maskBytes = new byte[8];
-        if (!TryRead(read, root + offsets.Mask, maskBytes))
+        if (!TryRead(memory, root + offsets.Mask, maskBytes))
         {
             return Sample(ClientScreenKind.Unknown, "read-failed", clientVersion);
         }
@@ -341,8 +386,8 @@ public sealed class ClientScreenMemory : IDisposable
         ClientScreenKind kind = Classify(shown);
         if (kind is not (ClientScreenKind.Loading or ClientScreenKind.Login))
         {
-            LocatePanels(read, root);
-            if (PanelShown(read, awardsPanel) == true)
+            LocatePanels(memory, root);
+            if (PanelShown(memory, awardsPanel) == true)
             {
                 kind = ClientScreenKind.Awards;
             }
@@ -361,6 +406,7 @@ public sealed class ClientScreenMemory : IDisposable
         return new ClientScreenSample(
             kind,
             shown,
+            menuSeen,
             kind switch
             {
                 ClientScreenKind.NoScreen => "no-screen",
@@ -368,8 +414,7 @@ public sealed class ClientScreenMemory : IDisposable
                 _ => "screens",
             },
             Version(),
-            Mismatch(clientVersion),
-            menuSeen
+            Mismatch(clientVersion)
         );
     }
 
@@ -420,10 +465,10 @@ public sealed class ClientScreenMemory : IDisposable
         return ClientScreenKind.Menu;
     }
 
-    /// <summary>Closes the process handle.</summary>
+    /// <summary>Closes the process handle this reader opened.</summary>
     public void Dispose()
     {
-        ReleaseHandle();
+        attachment.Dispose();
     }
 
     private bool Ready => globalRva != 0 && offsets.Mask != 0 && names.Count > 0;
@@ -432,7 +477,7 @@ public sealed class ClientScreenMemory : IDisposable
         ClientScreenKind kind,
         string why,
         HeroesClientVersion clientVersion
-    ) => new(kind, Array.Empty<string>(), why, Version(), Mismatch(clientVersion), menuSeen);
+    ) => new(kind, Array.Empty<string>(), menuSeen, why, Version(), Mismatch(clientVersion));
 
     private HeroesClientVersion Version() => HeroesClientVersion.TryParse(fileVersion);
 
@@ -442,7 +487,7 @@ public sealed class ClientScreenMemory : IDisposable
         return clientVersion is not null && running is not null && running != clientVersion;
     }
 
-    private void UseModule(StableClockModule module)
+    private void UseModule(ClientModule module)
     {
         if (
             pid == module.ProcessId
@@ -473,11 +518,11 @@ public sealed class ClientScreenMemory : IDisposable
         rediscoverAt = default;
     }
 
-    private void Discover(Func<long, byte[], bool> read)
+    private void Discover(IProcessMemory memory)
     {
         discovered = true;
-        rediscoverAt = UtcNow() + RediscoverAfter;
-        if (!ModuleScanner.TrySections(read, moduleBase, moduleSize, out var sections))
+        rediscoverAt = time.GetUtcNow() + RediscoverAfter;
+        if (!ModuleScanner.TrySections(memory, moduleBase, moduleSize, out var sections))
         {
             reason = "read-failed";
             return;
@@ -494,7 +539,7 @@ public sealed class ClientScreenMemory : IDisposable
             }
 
             ModuleScanner.Walk(
-                read,
+                memory,
                 moduleBase,
                 section,
                 overlap,
@@ -531,7 +576,7 @@ public sealed class ClientScreenMemory : IDisposable
                 continue;
             }
 
-            byte[] data = ModuleScanner.ReadSection(read, moduleBase, section);
+            byte[] data = ModuleScanner.ReadSection(memory, moduleBase, section);
             table = GlueScreenTable.Find(data, section.VirtualAddress, moduleBase, moduleSize);
             if (table.Count > 0)
             {
@@ -554,11 +599,11 @@ public sealed class ClientScreenMemory : IDisposable
     /// <summary>
     /// A pointer is zero or a user-mode address. Anything else is not this structure.
     /// </summary>
-    private static bool TryReadPointer(Func<long, byte[], bool> read, long address, out long value)
+    private static bool TryReadPointer(IProcessMemory memory, long address, out long value)
     {
         value = 0;
         byte[] buffer = new byte[8];
-        if (!TryRead(read, address, buffer))
+        if (!TryRead(memory, address, buffer))
         {
             return false;
         }
@@ -567,83 +612,8 @@ public sealed class ClientScreenMemory : IDisposable
         return value == 0 || (value >= 0x10000 && value <= 0x7FFF_FFFF_FFFF);
     }
 
-    private static bool TryRead(Func<long, byte[], bool> read, long address, byte[] buffer)
+    private static bool TryRead(IProcessMemory memory, long address, byte[] buffer)
     {
-        return address > 0 && read(address, buffer);
-    }
-
-    private bool TryAttach(Process process, out StableClockModule module)
-    {
-        module = default;
-        try
-        {
-            if (process == null || process.HasExited)
-            {
-                reason = "no-process";
-                return false;
-            }
-
-            if (handle == IntPtr.Zero || attachedPid != process.Id)
-            {
-                ReleaseHandle();
-                handle = NativeMethods.OpenProcess(
-                    NativeMethods.ProcessQueryInformation | NativeMethods.ProcessVmRead,
-                    false,
-                    process.Id
-                );
-                if (handle == IntPtr.Zero)
-                {
-                    reason = "open-failed";
-                    return false;
-                }
-
-                attachedPid = process.Id;
-            }
-
-            ProcessModule main = process.MainModule;
-            if (main == null || main.BaseAddress == IntPtr.Zero || main.ModuleMemorySize <= 0)
-            {
-                reason = "no-module";
-                return false;
-            }
-
-            module = new StableClockModule(
-                process.Id,
-                main.BaseAddress.ToInt64(),
-                main.ModuleMemorySize,
-                main.FileVersionInfo.FileVersion,
-                StableClockModule.StartTicks(process)
-            );
-            return true;
-        }
-        catch
-        {
-            reason = "no-process";
-            return false;
-        }
-    }
-
-    private bool ReadProcess(long address, byte[] buffer)
-    {
-        return handle != IntPtr.Zero
-            && NativeMethods.ReadProcessMemory(
-                handle,
-                (IntPtr)address,
-                buffer,
-                buffer.Length,
-                out int read
-            )
-            && read == buffer.Length;
-    }
-
-    private void ReleaseHandle()
-    {
-        if (handle != IntPtr.Zero)
-        {
-            NativeMethods.CloseHandle(handle);
-            handle = IntPtr.Zero;
-        }
-
-        attachedPid = 0;
+        return address > 0 && memory.TryRead(address, buffer);
     }
 }

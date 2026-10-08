@@ -40,14 +40,23 @@ public class MatchTickClockTests
     [InlineData("2.55.17.98025", true)]
     [InlineData("2.55.17.97771", false)]
     [InlineData("", false)]
-    public void IsSupportedVersion_IsOnlyBuild98025(string version, bool supported)
+    public void FixedClock_IsOnlyBuild98025(string version, bool supported)
     {
-        Assert.Equal(supported, MatchTickClock.IsSupportedVersion(version));
+        BuildProfile profile = BuildProfileRegistry.Default.Resolve(
+            HeroesClientVersion.TryParse(version)
+        );
+        Assert.Equal(supported, profile.FixedClock.HasValue);
     }
 
     [Fact]
     public void Rvas_MatchThe98025GhidraNotes()
     {
+        Assert.Equal(
+            new MatchClockAddresses(0x338D4A4, 0x264862C),
+            BuildProfileRegistry
+                .Default.Resolve(new HeroesClientVersion(2, 55, 17, 98025))
+                .FixedClock
+        );
         Assert.Equal(0x338D4A4, MatchTickClock.MatchTickRva);
         Assert.Equal(0x264862C, MatchTickClock.GameSpeedFactorRva);
     }

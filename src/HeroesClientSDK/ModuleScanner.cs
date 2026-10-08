@@ -19,8 +19,8 @@ internal readonly record struct ModuleSection(
 
 /// <summary>
 /// Reads the section table of a client module from its in-memory PE headers and walks a section
-/// in chunks. The on-disk exe has its code encrypted, so every pattern is matched against the
-/// running client's memory, read-only.
+/// in chunks. Every reader's pattern discovery goes through here. The on-disk exe has its code
+/// encrypted, so every pattern is matched against the running client's memory, read-only.
 /// </summary>
 internal static class ModuleScanner
 {
@@ -28,8 +28,12 @@ internal static class ModuleScanner
     public const int Chunk = 1 << 20;
     public const int MaxSectionSize = 64 * 1024 * 1024;
 
+    /// <summary>
+    /// The sections of the module at <paramref name="moduleBase"/> that lie inside
+    /// <paramref name="moduleSize"/>. False when the headers do not read or parse.
+    /// </summary>
     public static bool TrySections(
-        Func<long, byte[], bool> read,
+        IProcessMemory memory,
         long moduleBase,
         long moduleSize,
         out List<ModuleSection> sections
@@ -37,7 +41,7 @@ internal static class ModuleScanner
     {
         sections = new List<ModuleSection>();
         byte[] headers = new byte[HeaderSize];
-        if (read == null || moduleBase <= 0 || !read(moduleBase, headers))
+        if (memory == null || moduleBase <= 0 || !memory.TryRead(moduleBase, headers))
         {
             return false;
         }
@@ -119,7 +123,7 @@ internal static class ModuleScanner
     /// Chunks overlap by <paramref name="overlap"/> bytes so a pattern across a boundary is seen.
     /// </summary>
     public static void Walk(
-        Func<long, byte[], bool> read,
+        IProcessMemory memory,
         long moduleBase,
         ModuleSection section,
         int overlap,
@@ -136,7 +140,7 @@ internal static class ModuleScanner
             int count = Math.Min(section.VirtualSize - offset, Chunk + overlap);
             byte[] slice = new byte[count];
             long rva = section.VirtualAddress + offset;
-            if (read(moduleBase + rva, slice))
+            if (memory.TryRead(moduleBase + rva, slice))
             {
                 visit(slice, rva);
             }
@@ -144,13 +148,36 @@ internal static class ModuleScanner
     }
 
     /// <summary>
+    /// The whole section in one read when it reads, else <see cref="Walk"/>. The match clock has
+    /// always scanned this way.
+    /// </summary>
+    public static void WalkWhole(
+        IProcessMemory memory,
+        long moduleBase,
+        ModuleSection section,
+        int overlap,
+        Action<byte[], long> visit
+    )
+    {
+        if (section.VirtualSize <= 0 || section.VirtualSize > MaxSectionSize)
+        {
+            return;
+        }
+
+        byte[] whole = new byte[section.VirtualSize];
+        if (memory.TryRead(moduleBase + section.VirtualAddress, whole))
+        {
+            visit(whole, section.VirtualAddress);
+            return;
+        }
+
+        Walk(memory, moduleBase, section, overlap, visit);
+    }
+
+    /// <summary>
     /// The whole section, page by page. Pages that cannot be read stay zero.
     /// </summary>
-    public static byte[] ReadSection(
-        Func<long, byte[], bool> read,
-        long moduleBase,
-        ModuleSection section
-    )
+    public static byte[] ReadSection(IProcessMemory memory, long moduleBase, ModuleSection section)
     {
         if (section.VirtualSize <= 0 || section.VirtualSize > MaxSectionSize)
         {
@@ -163,7 +190,7 @@ internal static class ModuleScanner
         {
             int count = Math.Min(bytes.Length - offset, Chunk);
             byte[] buffer = count == Chunk ? chunk : new byte[count];
-            if (read(moduleBase + section.VirtualAddress + offset, buffer))
+            if (memory.TryRead(moduleBase + section.VirtualAddress + offset, buffer))
             {
                 Array.Copy(buffer, 0, bytes, offset, count);
                 continue;
@@ -172,7 +199,7 @@ internal static class ModuleScanner
             for (int page = 0; page < count; page += 0x1000)
             {
                 byte[] one = new byte[Math.Min(0x1000, count - page)];
-                if (read(moduleBase + section.VirtualAddress + offset + page, one))
+                if (memory.TryRead(moduleBase + section.VirtualAddress + offset + page, one))
                 {
                     Array.Copy(one, 0, bytes, offset + page, one.Length);
                 }
@@ -180,5 +207,21 @@ internal static class ModuleScanner
         }
 
         return bytes;
+    }
+
+    /// <summary>
+    /// A pointer is zero or a user-mode address. Anything else is not the structure being read.
+    /// </summary>
+    public static bool TryReadPointer(IProcessMemory memory, long address, out long value)
+    {
+        value = 0;
+        Span<byte> buffer = stackalloc byte[8];
+        if (memory == null || address <= 0 || !memory.TryRead(address, buffer))
+        {
+            return false;
+        }
+
+        value = BitConverter.ToInt64(buffer);
+        return value == 0 || (value >= 0x10000 && value <= 0x7FFF_FFFF_FFFF);
     }
 }

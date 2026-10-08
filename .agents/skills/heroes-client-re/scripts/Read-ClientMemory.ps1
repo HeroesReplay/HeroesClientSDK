@@ -11,7 +11,7 @@ Chain semantics, the same as the SDK readers:
   address = moduleBase + Rva
   for each offset: address = [address] + offset      (read a pointer, add the offset)
   then read -Size bytes at address
-So the screen flags byte of LoadingScreenMemory is -Rva 0x3771830 -Offsets 0x218,0x48 -Size 1
+So the screen flags byte of LoadingScreen is -Rva 0x3771830 -Offsets 0x218,0x48 -Size 1
 (state = [G], screen = [state + 0x218], flags = [screen + 72]) on 2.57.0.98304.
 
 Each qword that points into the module is annotated with its RVA (an object's first qword is its
