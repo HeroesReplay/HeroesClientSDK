@@ -9,7 +9,9 @@ Read-only access to a running Heroes of the Storm client's memory on Windows:
   (boot splash or map loading), or a match.
 - **Menu screens** (`ClientScreenMemory`): which screen the client shows, by the client's own
   screen names: the login form, home, the loading screen, the score screen, another menu, or a
-  match. It also says whether the client is signed in (false on the login form, true on home).
+  match. It also says whether the client is signed in (false on the login form, true on home),
+  and reads two UI panels from the client's frame tree: the MVP and awards screen at the end of a
+  match (`Awards`) and the game data download panel (`Download`).
 
 Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
 process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
@@ -152,6 +154,18 @@ loading screen's frame is gone, and the sample reads `Match`. A loading screen c
 (`MapLoading`) only after that process has shown a menu or a match, because the boot splash is the
 same screen. Measured on 2.57.0.98348: home `0x6181`, the login form `0x60C1`, the boot splash
 `0x20`.
+
+### How the awards and download panels are read
+
+The client's UI frames form one tree above the menu root. Each frame keeps its parent at `+0x50`,
+its visible bit in the byte at `+0x48`, and its children as an intrusive list (first child node at
+`+0x40`, the child's node at `+0x18`, the next sibling's node at `+0x20`, a tagged end). A panel is
+found by its frame type: the client registers `EndOfGameAwardsPanel` and `DownloadPanel` with a
+factory whose constructor stores the class's vtable, so `FrameTypeLocator` follows the
+registration to the vtable and `FrameTree` finds the frame with it (the awards panel is about
+6,600 frames into an in-game tree of 86,000, 17 ms). A panel shows when it and every frame above it
+are visible. The awards panel exists for the whole match, so a reader that starts mid-match reads
+`Match` rather than `Unknown`.
 
 ## Probe
 
