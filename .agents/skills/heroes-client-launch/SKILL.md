@@ -160,6 +160,13 @@ checks, and its main log only discovers the two processes. So the newest client 
 itself, which fits the client's own `@UI/GameLaunchVersionDownload*` messages. After that, the build
 is an installed previous patch.
 
+The same case ran again on 2026-10-08 (HeroesReplay#292 shadow proof). `Base98285`'s exe and its
+`Data\Clients` copy were moved aside first. HeroesSwitcher opened replay 65550003 at 19:08:06. The
+newest exe showed "Preparing game data", then DOWNLOADING (`CProgressBarDialog`, launch state 6,
+then 8). The `Base98285` exe arrived 38 s after the open and was byte-identical to the copy set
+aside. The 98285 client showed "Preparing game data" itself, then the map loading screen, and the
+clock read at about 19:09:40.
+
 **When Blizzard doesn't serve the build,** the exe never appears, or the newest exe shows "The version
 of Heroes of the Storm required to play this game is not available." That happened with 2.57.0.98297
 on 2026-10-07. The dialog is a top-level `CStandardDialog` over `ScreenLoginUnified` (#292).
@@ -195,7 +202,7 @@ Don't click Update or Play to fetch anything. The owner handles patches (HeroesR
 | `Versions\Base<build>` exists but has no exe | install folder | Not installed: reclaimed, never served, or not arrived yet |
 | The exe appears in `Versions\Base<build>` | install folder | An older-build download has arrived; the previous-patch rules apply from here |
 | "DOWNLOADING — All data files must be fully downloaded to load this version of the game. Calculating... CANCEL" | client window (`ClientScreenText.GameDataDownload` = "must be fully downloaded") | The client is fetching data, seen on the newest exe during a handoff. Memory: a shown top-level `CProgressBarDialog` with no screen bit, launch state 6, then 8 before the exe exits. `ClientScreen` reads `Download` (0.4.1, read live on 98348 on 2026-10-08) |
-| "Preparing game data" | a native Win32 window (`DownloadProgressMessage` in `.rsrc`) | Startup of the replay's own client. Leave it |
+| "Preparing game data" | A native Win32 dialog from the exe's resources: the `DLGTEMPLATEEX` "Progress", the same in 2.55.17.98025 and 2.57.0.98285, 98304 and 98348. Live it is a visible top-level `#32770` titled "Heroes of the Storm", 404x143 client pixels, with children `Static` 30101 "Preparing game data" (`DownloadProgressMessage`), `msctls_progress32` 30102, `Static` 30103 "Calculating..." and `Button` 2 "Cancel". `GetWindowText` reads the static texts across processes. Seen on 2026-10-08 on 98348 (Battle.net SSO starts and the newest exe of a handoff), 98304 and 98285. HeroesReplay reads it with `EnumWindows`/`GetClassName` (`GameDataProgressWindow`, HeroesReplay#373) | Startup of a client, on a Battle.net start too. Leave it |
 | A blank full-size window on the switcher's process | client window | Still starting. Leave it until `ColdBootLimit` |
 | `HeroesData\data\data.NNN` growing, `*.idx` rewritten, a new `shmem` time | CASC | Data written. This also happens on an ordinary start, so it is a hint, not proof |
 | Battle.net button "Update" / "Updating" | Battle.net window (`LauncherButtonText`) | A current-patch update is pending or running. Never click it |
