@@ -202,4 +202,4 @@ The client exe is encrypted on disk, so code work uses a memory image. Nothing f
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+All rights reserved. The source is published for reference only; see [LICENSE](LICENSE).
