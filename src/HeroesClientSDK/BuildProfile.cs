@@ -87,6 +87,47 @@ public sealed record DialogTextLayout(
 }
 
 /// <summary>
+/// Where the score screen keeps the local player's Storm League result. The <c>CScreenScore</c>
+/// frame, a child of the menu root that lives from start-up, holds the player's end-of-game record
+/// at <see cref="RecordOffset"/>. The record is null until a game ends.
+/// <para>
+/// In the record, <see cref="RankedOffset"/> is 1 and the byte at <see cref="HasRankOffset"/> is
+/// non-zero when there is a rank result, and the 16-bit value at <see cref="StatusOffset"/> is 0
+/// when it reads. The rank before the game is at <see cref="BeforeOffset"/> and after it at
+/// <see cref="AfterOffset"/>, 40 bytes each (<see cref="RankStanding"/>). The total points change
+/// is at <see cref="DeltaOffset"/>, and five 32-bit values from <see cref="BreakdownOffset"/> hold
+/// its breakdown (<see cref="RankPointsBreakdown"/>).
+/// </para>
+/// <para>
+/// Found in the code of 2.57.0.98348 (2026-10-09): <c>CPlayerRewardsPanel::SetData</c>, called
+/// with this record when the score screen shows, and the record's getters. Not yet confirmed on a
+/// ranked game (HeroesClientSDK#19).
+/// </para>
+/// </summary>
+/// <param name="RecordOffset">The record pointer's offset in the <c>CScreenScore</c> frame.</param>
+/// <param name="RankedOffset">A 32-bit value, 1 when the record has league data.</param>
+/// <param name="HasRankOffset">A byte, non-zero when the record holds a rank result.</param>
+/// <param name="BeforeOffset">The rank before the game.</param>
+/// <param name="AfterOffset">The rank after the game.</param>
+/// <param name="DeltaOffset">The total points change, a 32-bit value.</param>
+/// <param name="BreakdownOffset">The breakdown, five 32-bit values.</param>
+/// <param name="StatusOffset">A 16-bit value, 0 when the record reads.</param>
+public sealed record MatchRankLayout(
+    long RecordOffset = 0x260,
+    long RankedOffset = 0x1680,
+    long HasRankOffset = 0x1684,
+    long BeforeOffset = 0x1688,
+    long AfterOffset = 0x16B0,
+    long DeltaOffset = 0x16D8,
+    long BreakdownOffset = 0x16DC,
+    long StatusOffset = 0x205C
+)
+{
+    /// <summary>The layout of 2.57.0.98348, used for every build until one needs its own.</summary>
+    public static MatchRankLayout Default { get; } = new();
+}
+
+/// <summary>
 /// Per-build data. The readers find everything by instruction pattern first; a profile adds what
 /// a pattern cannot give for that build. It is chosen by the running exe's build (exact build,
 /// then patch line, then <see cref="BuildProfileRegistry.Fallback"/>), never by a static setting.
@@ -116,6 +157,9 @@ public sealed record BuildProfile
     /// <see cref="DialogTextPattern"/> does not find it in the client's code.
     /// </summary>
     public DialogTextLayout DialogText { get; init; } = DialogTextLayout.Default;
+
+    /// <summary>Where the score screen keeps the Storm League result, which <see cref="HeroesClientSDK.MatchRank"/> reads.</summary>
+    public MatchRankLayout MatchRank { get; init; } = MatchRankLayout.Default;
 }
 
 /// <summary>

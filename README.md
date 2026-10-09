@@ -14,6 +14,12 @@ Read-only access to a running Heroes of the Storm client's memory on Windows:
   whether the client is signed in (false on the login screen, true on home), which dialogs are
   shown, and the client's last game-launch result by its message key (for example
   `GameLaunchBaseBuildMissing`).
+- **Storm League result** (`MatchRank`, `MatchRankWatcher`): what the score screen shows at the
+  end of the local player's ranked game. That is the rank before and after (league, division,
+  points, promotion or demotion series, Grandmaster position or placement), the rank points
+  change and its breakdown. The watcher raises an event once per new result. The client holds
+  rank points here, not MMR. The layout comes from the client's code and has not yet been
+  confirmed on a ranked game (HeroesClientSDK#19).
 
 Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
 process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
@@ -127,12 +133,14 @@ client's code once between them (0.4.2); each still keeps its own 10-second retr
 
 | Type | What it is |
 | --- | --- |
-| `MatchClock`, `LoadingScreen`, `ClientScreen` | The readers. Each has `Read(Process process, HeroesClientVersion clientVersion = null)` and `Read(HeroesClientProcess client, HeroesClientVersion clientVersion = null)`. |
-| `MatchClockSample`, `LoadingScreenSample`, `ClientScreenSample` | One read each. Every sample has `Ok`, `Reason`, `ClientVersion` (the running exe, or null) and `VersionMismatch`. |
+| `MatchClock`, `LoadingScreen`, `ClientScreen`, `MatchRank` | The readers. Each has `Read(Process process, HeroesClientVersion clientVersion = null)` and `Read(HeroesClientProcess client, HeroesClientVersion clientVersion = null)`. |
+| `MatchClockSample`, `LoadingScreenSample`, `ClientScreenSample`, `MatchRankSample` | One read each. Every sample has `Ok`, `Reason`, `ClientVersion` (the running exe, or null) and `VersionMismatch`. |
+| `RankResult`, `RankStanding`, `RankPointsBreakdown` | A Storm League result: `Before` and `After` (`League`, `Division`, `Points`, `Phase`, `LadderPosition`, `PlacementGames`), `DeltaPoints` and `Breakdown` (`Match`, `Favored`, `CatchUpBonus`, `Performance`, `DeserterPenalty`). |
+| `MatchRankWatcher` | Raises `ResultAvailable` (`MatchRankEventArgs`: `ProcessId`, `Result`, `ClientVersion`, `ObservedAt`) once per new result of every running client. Use `Poll()` from your own loop, or `RunAsync(cancellationToken)`. |
 | `HeroesClientProcess` | One client attached read-only. `Attach(Process)` never throws and says `Ok` and `Reason` (`no-process`, `open-failed`, `no-module`), with `Module` and `DetectedVersion`. Pass it to every reader to share one handle (and one code scan for the two screen readers). `FromMemory(IProcessMemory, ClientModule)` serves a fake or recorded memory instead of a process. `FromImage(path)` serves a saved module image (`no-image`, `bad-image`). |
 | `IProcessMemory` | `TryRead(address, buffer)`: the only thing a reader needs from a client. Implement it for tests. |
 | `HeroesClientOptions` | Optional reader settings: `Profiles` and `TimeProvider`. |
-| `BuildProfileRegistry`, `BuildProfile` | Per-build data, looked up by the running exe's build: exact build, then patch line (`2.57`), then `Fallback`. Immutable. `Default` holds the generic profile and the fixed clock of `2.55.17.98025`. A profile also holds the loading-screen layout (`LoadingScreenLayout`) and the UI frame tree's layout (`FrameTreeLayout`). |
+| `BuildProfileRegistry`, `BuildProfile` | Per-build data, looked up by the running exe's build: exact build, then patch line (`2.57`), then `Fallback`. Immutable. `Default` holds the generic profile and the fixed clock of `2.55.17.98025`. A profile also holds the loading-screen layout (`LoadingScreenLayout`), the UI frame tree's layout (`FrameTreeLayout`) and where the score screen keeps the Storm League result (`MatchRankLayout`). |
 | `ClientDiscovery` | Every reader's discovery on one client, without reading match or screen state: `Run(client)` gives `Clock`, `Loading` and `Menus` (the globals, offsets, tables and frame classes each reader found) and `Ok`. Works on a saved module image. |
 | `HeroesClientVersion` | A client build: `TryParse`, `FromFile`, `PatchLine`, comparable. |
 | `MatchClockTelemetry` | Where clock discovery stands (`discovering`, `memory-locked`, `memory-unlocked`), from `MatchClock.LastTelemetry`. |
@@ -266,6 +274,57 @@ MVP screen (`0x7B`): measured on 2.57.0.98348, replay 65823392, 2026-10-08. The 
 panel is missing. Because the panel exists only in a match, a reader that starts mid-match reads
 `Match` rather than `Unknown`.
 
+### How the Storm League result is read
+
+```csharp
+using var rank = new MatchRank();
+MatchRankSample sample = rank.Read(client);
+if (sample.Result is RankResult result)
+{
+    // Gold 3 (312) -> Gold 2 (54): +142
+    Console.WriteLine($"{result.Before} -> {result.After}: {result.DeltaPoints:+#;-#;0}");
+}
+else
+{
+    // "no-result" (no game has ended in this client), "no-rank" (not a ranked game), ...
+    Console.WriteLine(sample.Reason);
+}
+
+// Or an event once per new result, from every running client:
+using var watcher = new MatchRankWatcher();
+watcher.ResultAvailable += (_, e) => Console.WriteLine($"pid {e.ProcessId}: {e.Result.DeltaPoints}");
+await watcher.RunAsync(cancellationToken);
+```
+
+The score screen is a menu screen, `CScreenScore`. It is a child of the menu root (the client's
+`CGlueUI`) and lives from start-up, so the reader finds it by class name among the menu root's
+children. It keeps the local player's end-of-game record at `+0x260`, null until a game ends in
+the client; that pointer is what `CPlayerRewardsPanel::SetData` reads when the score screen shows.
+
+In the record:
+
+- **Whether it holds a rank:** `+0x1680` is 1, the byte at `+0x1684` is non-zero and the 16-bit
+  value at `+0x205C` is 0. Otherwise the read is `no-rank`.
+- **The rank before and after:** at `+0x1688` and `+0x16B0`, 40 bytes each:
+  - a variant: 0 while placing, followed by the placement value; 1 when ranked;
+  - when ranked: the league (0 Bronze to 6 Grandmaster), the division byte, the points, and the
+    phase (0 none, 1 promotion with its value, 2 demotion);
+  - for Grandmaster, the ladder position.
+- **The points:** the total change at `+0x16D8`, and the breakdown in five values from `+0x16DC`
+  (match points, the favored-team adjustment, catch-up bonus, performance points and deserter
+  penalty). These are the client's `@UI/RewardItem` kinds in the rank tooltip.
+
+The offsets are `MatchRankLayout`, which is build-profile data. They were found in the code of
+2.57.0.98348 on 2026-10-09:
+
+- the panel's `SetData` (fn `0x10119D0`);
+- the record's getters (fns `0x1E45F30` to `0x1E469C0`);
+- the rank conversion (fn `0x1DED180`).
+
+At the home screen of a live client, the frames read as predicted and the record reads null. A
+ranked game still has to confirm the record's values: run `heroes-client-probe --rank` through one
+(below). No MMR was found on this path: the score screen shows rank points.
+
 ## Probe
 
 `tools/HeroesClientSDK.Probe` prints what the SDK reads from every running client, read-only:
@@ -281,24 +340,23 @@ reader, and the match clock. The three readers share one `HeroesClientProcess` p
 
 ### Capturing a Storm League result
 
-`--rank` captures the score screen's Storm League result for HeroesClientSDK#19. It is not an SDK
-read yet. Start it before a ranked game and leave it running until you are back at the home screen:
+`--rank` runs `MatchRank` and `MatchRankWatcher` on every client, to confirm the read on a ranked
+game (HeroesClientSDK#19). Start it before a Storm League game and leave it running until you are
+back at the home screen:
 
 ```powershell
 dotnet run --project tools/HeroesClientSDK.Probe -c Release -- --rank
 ```
 
-It reads every client once a second, and each time a capture changes it appends one JSON line to
-`heroes-client-rank-<time>.jsonl` (`--out` names the file, `--watch <ms>` sets the interval).
+It reads every client once a second and appends JSON lines to `heroes-client-rank-<time>.jsonl`
+(`--out` names the file, `--watch <ms>` sets the interval):
 
-Each line holds the decoded fields next to the raw bytes they come from:
+- **A capture line** each time a client's reading changes: the screen, the `MatchRank` reason and
+  result, and the evidence behind them. The evidence is the record's address, status and raw bytes,
+  and the score screen's rank label as the player sees it.
+- **A result line** for each result the watcher raises.
 
-- the score screen's end-of-game record: the rank before and after, the total change and the
-  breakdown;
-- the rewards panel's copy: the ranks, the breakdown items and the rank label's text and numbers.
-
-The offsets are those of 2.57.0.98348, found in the client's code. The capture is the data that
-confirms them.
+The console prints a summary of each line.
 
 ### Checking a new build offline
 

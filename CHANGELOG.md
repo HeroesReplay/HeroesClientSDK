@@ -3,6 +3,33 @@
 Each release is a `vX.Y.Z` tag on `main`. Its `.nupkg` and SHA-256 are on the
 [GitHub Release](https://github.com/HeroesReplay/HeroesClientSDK/releases) of that tag.
 
+## Unreleased
+
+The Storm League result of the local player's last game, for HeroesClientSDK#19. Additive: no
+0.4.x name changes, and every read behaves as before. Not released until a ranked game confirms
+the layout (`heroes-client-probe --rank`).
+
+- **`MatchRank`**: a reader like the others (`Read(Process | HeroesClientProcess,
+  HeroesClientVersion clientVersion = null)`).
+  - **What it returns:** a `MatchRankSample` with `Result` (`RankResult`: `Before` and `After`
+    `RankStanding`, `DeltaPoints`, `RankPointsBreakdown`), or a reason: `no-result` before any
+    game ends, `no-rank` for a game without a rank, `no-score-screen`, `bad-record`, and the usual
+    discovery reasons.
+  - **Where it reads:** the end-of-game record that the score screen (`CScreenScore`) keeps at
+    `+0x260`, found under the menu root by class name. The record's layout is
+    `MatchRankLayout`, build-profile data (`BuildProfile.MatchRank`).
+  - **Discovery:** it shares the screen readers' one code walk per `HeroesClientProcess`.
+  - **Proof so far:** the layout was found in the 2.57.0.98348 code (2026-10-09). On a live
+    client the frames read as predicted, from the boot splash to home, and the record reads null
+    until a game ends.
+  - **No MMR:** the score screen holds rank points.
+- **`MatchRankWatcher`**: raises `ResultAvailable` (`MatchRankEventArgs`) once per new result of
+  every running client, so a score screen read many times raises once. Use `Poll()` or
+  `RunAsync(cancellationToken)`.
+- **`heroes-client-probe --rank`** now runs both. It writes the reader's result, its evidence
+  (the record's address, status and raw bytes, and the rank label's text) and the watcher's
+  results as JSON lines.
+
 ## 0.4.4
 
 Message dialogs with their text, for HeroesReplay#292: Battle.net's own errors from memory
