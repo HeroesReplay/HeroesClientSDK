@@ -23,5 +23,6 @@
 
     <ItemGroup>
         <InternalsVisibleTo Include="HeroesClientSDK.Tests" />
+        <InternalsVisibleTo Include="heroes-client-probe" />
     </ItemGroup>
 </Project>

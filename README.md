@@ -279,6 +279,27 @@ game-launch result and the launch state, the map loading and signed-in states, t
 reader, and the match clock. The three readers share one `HeroesClientProcess` per client.
 `--version 2.57.0.98304` reports a client that is another build.
 
+### Capturing a Storm League result
+
+`--rank` captures the score screen's Storm League result for HeroesClientSDK#19. It is not an SDK
+read yet. Start it before a ranked game and leave it running until you are back at the home screen:
+
+```powershell
+dotnet run --project tools/HeroesClientSDK.Probe -c Release -- --rank
+```
+
+It reads every client once a second, and each time a capture changes it appends one JSON line to
+`heroes-client-rank-<time>.jsonl` (`--out` names the file, `--watch <ms>` sets the interval).
+
+Each line holds the decoded fields next to the raw bytes they come from:
+
+- the score screen's end-of-game record: the rank before and after, the total change and the
+  breakdown;
+- the rewards panel's copy: the ranks, the breakdown items and the rank label's text and numbers.
+
+The offsets are those of 2.57.0.98348, found in the client's code. The capture is the data that
+confirms them.
+
 ### Checking a new build offline
 
 The exe file cannot be scanned, because its code is encrypted on disk. A read-only image of a
