@@ -2,7 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Globalization;
+using System.IO;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using HeroesClientSDK;
 
@@ -13,15 +15,28 @@ using HeroesClientSDK;
 //   heroes-client-probe --watch [ms]    a line whenever a client's reading changes (Ctrl+C stops)
 //   heroes-client-probe --version 2.57.0.98304   pass an expected build (optional)
 //   heroes-client-probe --image <file>  every reader's discovery on a saved module image, offline
+//   heroes-client-probe --rank [--watch ms] [--out file.jsonl]
+//                                       the score screen's Storm League result (HeroesClientSDK#19):
+//                                       a JSON line per change, until Ctrl+C
 
 int interval = 0;
 HeroesClientVersion expected = null;
 string image = null;
+bool rank = false;
+string output = null;
 for (int i = 0; i < args.Length; i++)
 {
     if (args[i] == "--image" && i + 1 < args.Length)
     {
         image = args[++i];
+    }
+    else if (args[i] == "--rank")
+    {
+        rank = true;
+    }
+    else if (args[i] == "--out" && i + 1 < args.Length)
+    {
+        output = args[++i];
     }
     else if (args[i] == "--watch")
     {
@@ -43,7 +58,7 @@ for (int i = 0; i < args.Length; i++)
     else if (args[i] is "-h" or "--help")
     {
         Console.WriteLine(
-            "heroes-client-probe [--watch [ms]] [--version 2.57.0.98304] | --image <file> [--version ...]"
+            "heroes-client-probe [--watch [ms]] [--version 2.57.0.98304] | --image <file> [--version ...] | --rank [--watch ms] [--out file.jsonl]"
         );
         return 0;
     }
@@ -52,6 +67,11 @@ for (int i = 0; i < args.Length; i++)
 if (image != null)
 {
     return CheckImage(image, expected);
+}
+
+if (rank)
+{
+    return CaptureRank(interval > 0 ? interval : 1000, output);
 }
 
 var readers = new Dictionary<int, Readers>();
@@ -109,6 +129,82 @@ foreach (Readers reader in readers.Values)
 }
 
 return 0;
+
+// The score screen's Storm League result of every running client (RankCapture), every interval
+// ms until Ctrl+C. A capture that differs from the client's last one is appended to the output
+// file as one JSON line ({utc, pid, capture}) and summarized on the console. Run it before a ranked
+// game and leave it running until after the score screen.
+static int CaptureRank(int interval, string output)
+{
+    output ??=
+        $"heroes-client-rank-{DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture)}.jsonl";
+    output = Path.GetFullPath(output);
+    Console.WriteLine($"Writing {output} (Ctrl+C stops)");
+    var captures = new Dictionary<int, RankCapture>();
+    var last = new Dictionary<int, string>();
+    using var writer = new StreamWriter(output, append: true) { AutoFlush = true };
+    using var stop = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) =>
+    {
+        e.Cancel = true;
+        stop.Cancel();
+    };
+
+    while (!stop.IsCancellationRequested)
+    {
+        Process[] clients = Process.GetProcessesByName("HeroesOfTheStorm_x64");
+        foreach (Process client in clients)
+        {
+            if (!captures.TryGetValue(client.Id, out RankCapture capture))
+            {
+                capture = new RankCapture();
+                captures[client.Id] = capture;
+            }
+
+            string json = JsonSerializer.Serialize(capture.Read(client));
+            if (last.TryGetValue(client.Id, out string before) && before == json)
+            {
+                continue;
+            }
+
+            last[client.Id] = json;
+            DateTime now = DateTime.UtcNow;
+            writer.WriteLine(
+                $"{{\"utc\":\"{now.ToString("O", CultureInfo.InvariantCulture)}\",\"pid\":{client.Id.ToString(CultureInfo.InvariantCulture)},\"capture\":{json}}}"
+            );
+            using JsonDocument document = JsonDocument.Parse(json);
+            Console.WriteLine(
+                $"{now.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)} pid {client.Id} {RankCapture.Summary(document.RootElement)}"
+            );
+        }
+
+        foreach (int gone in captures.Keys.Where(id => clients.All(c => c.Id != id)).ToList())
+        {
+            writer.WriteLine(
+                $"{{\"utc\":\"{DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture)}\",\"pid\":{gone.ToString(CultureInfo.InvariantCulture)},\"exited\":true}}"
+            );
+            Console.WriteLine($"pid {gone} exited");
+            captures[gone].Dispose();
+            captures.Remove(gone);
+            last.Remove(gone);
+        }
+
+        foreach (Process client in clients)
+        {
+            client.Dispose();
+        }
+
+        stop.Token.WaitHandle.WaitOne(interval);
+    }
+
+    foreach (RankCapture capture in captures.Values)
+    {
+        capture.Dispose();
+    }
+
+    Console.WriteLine($"Wrote {output}");
+    return 0;
+}
 
 // Every reader's discovery on a module image that Save-ModuleImage.ps1 saved from a running
 // client. Exit 0 when every reader finds what it needs, 1 when one does not, 2 when the file does
