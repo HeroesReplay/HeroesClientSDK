@@ -130,10 +130,11 @@ foreach (Readers reader in readers.Values)
 
 return 0;
 
-// The score screen's Storm League result of every running client (RankCapture), every interval
-// ms until Ctrl+C. A capture that differs from the client's last one is appended to the output
-// file as one JSON line ({utc, pid, capture}) and summarized on the console. Run it before a ranked
-// game and leave it running until after the score screen.
+// The score screen's Storm League result of every running client (MatchRank, through
+// RankCapture), every interval ms until Ctrl+C. A capture that differs from the client's last one
+// is appended to the output file as one JSON line ({utc, pid, capture}) and summarized on the
+// console, and each result that MatchRankWatcher raises is a {utc, pid, result} line. Run it before
+// a ranked game and leave it running until after the score screen.
 static int CaptureRank(int interval, string output)
 {
     output ??=
@@ -143,6 +144,17 @@ static int CaptureRank(int interval, string output)
     var captures = new Dictionary<int, RankCapture>();
     var last = new Dictionary<int, string>();
     using var writer = new StreamWriter(output, append: true) { AutoFlush = true };
+    using var watcher = new MatchRankWatcher(TimeSpan.FromMilliseconds(interval));
+    watcher.ResultAvailable += (_, e) =>
+    {
+        string json = JsonSerializer.Serialize(e.Result, RankCapture.Json);
+        writer.WriteLine(
+            $"{{\"utc\":\"{e.ObservedAt.UtcDateTime.ToString("O", CultureInfo.InvariantCulture)}\",\"pid\":{e.ProcessId.ToString(CultureInfo.InvariantCulture)},\"result\":{json}}}"
+        );
+        Console.WriteLine(
+            $"{e.ObservedAt.ToLocalTime().ToString("HH:mm:ss", CultureInfo.InvariantCulture)} pid {e.ProcessId} NEW RESULT {e.Result.Before} -> {e.Result.After}, {e.Result.DeltaPoints.ToString("+#;-#;0", CultureInfo.InvariantCulture)} points"
+        );
+    };
     using var stop = new CancellationTokenSource();
     Console.CancelKeyPress += (_, e) =>
     {
@@ -161,7 +173,7 @@ static int CaptureRank(int interval, string output)
                 captures[client.Id] = capture;
             }
 
-            string json = JsonSerializer.Serialize(capture.Read(client));
+            string json = JsonSerializer.Serialize(capture.Read(client), RankCapture.Json);
             if (last.TryGetValue(client.Id, out string before) && before == json)
             {
                 continue;
@@ -194,6 +206,7 @@ static int CaptureRank(int interval, string output)
             client.Dispose();
         }
 
+        watcher.Poll();
         stop.Token.WaitHandle.WaitOne(interval);
     }
 

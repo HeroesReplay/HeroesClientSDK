@@ -5,8 +5,9 @@ This is the contract for coding agents in this repository. Code and this file wi
 ## Product
 
 HeroesClientSDK is read-only access to a running Heroes of the Storm client's memory on Windows:
-the match clock (`MatchClock`), the loading screen (`LoadingScreen`) and the menu screens
-(`ClientScreen`), on one read-only attachment per process (`HeroesClientProcess`). It is a
+the match clock (`MatchClock`), the loading screen (`LoadingScreen`), the menu screens
+(`ClientScreen`) and the Storm League result (`MatchRank`, `MatchRankWatcher`), on one read-only
+attachment per process (`HeroesClientProcess`). It is a
 `net10.0` library published as a NuGet package. Its main consumer is
 [HeroesReplay](https://github.com/HeroesReplay/HeroesReplay), which pins each release by version and
 SHA-256. The usage, the install, the build and the release steps are in [README.md](README.md).
@@ -15,7 +16,7 @@ SHA-256. The usage, the install, the build and the release steps are in [README.
 | --- | --- |
 | `src/HeroesClientSDK` | The library (the package) |
 | `tests/HeroesClientSDK.Tests` | xUnit tests: recorded bytes and fake reads, never a live client |
-| `tools/HeroesClientSDK.Probe` | `heroes-client-probe`: prints what the SDK reads from every running client, read-only; `--image <file>` checks every reader's discovery on a saved module image, offline |
+| `tools/HeroesClientSDK.Probe` | `heroes-client-probe`: prints what the SDK reads from every running client, read-only; `--image <file>` checks every reader's discovery on a saved module image, offline; `--rank` captures the Storm League result |
 | `.agents/skills` | The agent skills below |
 
 ## Rules

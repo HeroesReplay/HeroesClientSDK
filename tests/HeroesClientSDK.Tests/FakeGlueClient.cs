@@ -35,6 +35,8 @@ internal sealed class FakeGlueClient : IProcessMemory
     public const long MenuContainer = 0x5_0000_1000L;
     public const long GameUi = 0x5_0000_2000L;
     public const long AwardsPanel = 0x5_0000_3000L;
+    public const long ScoreScreen = 0x5_0000_4000L;
+    public const long RankRecord = 0x7_0000_0000L;
     private const long DialogBase = 0x5_0001_0000L;
     private const long LoadingChildren = 0x5_0002_0000L;
     private const int DialogSize = 0x300;
@@ -386,6 +388,39 @@ internal sealed class FakeGlueClient : IProcessMemory
         AddFrame(MenuContainer, "CLayer", 0x6B, Top);
         AddFrame(GameUi, "CGameUI", 0x7B, Top);
         BitConverter.GetBytes(MenuContainer).CopyTo(root, layout.ParentOffset);
+        children[Root] = new List<long>();
+    }
+
+    /// <summary>
+    /// The score screen: a <c>CScreenScore</c> frame under the menu root (the client's
+    /// <c>CGlueUI</c>), alive from start-up, with no end-of-game record yet. 2.57.0.98348 at the
+    /// home screen (2026-10-09): flags 0x7A, the record pointer at +0x260 null.
+    /// </summary>
+    public void AddScoreScreen()
+    {
+        AddTree();
+        if (!heap.ContainsKey(ScoreScreen))
+        {
+            AddFrame(ScoreScreen, "CScreenScore", 0x7A, Root, 0x300);
+        }
+    }
+
+    /// <summary>
+    /// The end-of-game record at the score screen's record pointer (a null record clears the
+    /// pointer), at <paramref name="address"/> so a test can tell two records apart.
+    /// </summary>
+    public void SetRankRecord(byte[] record, long address = RankRecord, MatchRankLayout rank = null)
+    {
+        rank ??= MatchRankLayout.Default;
+        AddScoreScreen();
+        if (record != null)
+        {
+            heap[address] = record;
+        }
+
+        BitConverter
+            .GetBytes(record == null ? 0 : address)
+            .CopyTo(heap[ScoreScreen], (int)rank.RecordOffset);
     }
 
     private void AddFrame(long frame, string className, byte flags, long parent, int size = 0x100)
@@ -407,7 +442,7 @@ internal sealed class FakeGlueClient : IProcessMemory
         long end = (parent + 0x38) | 1;
         BitConverter
             .GetBytes(list.Count == 0 ? end : list[0] + layout.NodeOffset)
-            .CopyTo(heap[parent], layout.FirstChildOffset);
+            .CopyTo(parent == Root ? root : heap[parent], layout.FirstChildOffset);
         for (int i = 0; i < list.Count; i++)
         {
             long next = i + 1 < list.Count ? list[i + 1] + layout.NodeOffset : end;
