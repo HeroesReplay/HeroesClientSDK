@@ -17,10 +17,13 @@ every read behaves as before, and nothing writes to the client or calls its func
   1 to 10, AhliObs' Ctrl+Shift+O) to the client's game window and its visible children with
   `PostMessage`, as HeroesReplay's spectator does. It works with the window in the background.
 - **`GameWindow`**: finds a client's game window and writes its client area to a PNG with
-  `PrintWindow` (`GameWindowCapture`, with a black-frame flag).
+  `PrintWindow` (`GameWindowCapture`, with a black-frame flag). A black frame, about one in three
+  during a match, is taken again up to 8 times 100 ms apart (`Attempts`).
 - **`heroes-client-probe --seek mm:ss`**: the same from a shell, with `--pause`, `--player`,
   `--panel`, `--shot`, `--replay` (open it, or replay it from the start for a target behind the
-  match), `--hud-offset` and `--pid`.
+  match), `--hud-offset` and `--pid`. Proven on ASA-SERVER on replay 66059611 (2.57.0.98348):
+  10:00 from Home with the load in 68.6 s, 10:00 to 13:00 from a paused replay in 27.7 s, back to
+  5:00 in 44.5 s, and 5:10 to 6:00 in 10.1 s, each landing on the second.
 
 
 The Storm League result of the local player's last game, for HeroesClientSDK#19. Additive: no
