@@ -180,6 +180,7 @@ internal sealed class SeekCommand
             ["totalSeconds"] = total.TotalSeconds,
             ["screenshot"] = shot?.Path,
             ["screenshotBlack"] = shot?.Black,
+            ["screenshotAttempts"] = shot?.Attempts,
         };
         Console.WriteLine(JsonSerializer.Serialize(json));
         return ok ? 0 : 1;

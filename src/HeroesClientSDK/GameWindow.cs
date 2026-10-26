@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Text;
+using System.Threading;
 
 namespace HeroesClientSDK;
 
@@ -17,13 +18,17 @@ namespace HeroesClientSDK;
 /// <param name="Black">
 /// True when almost every pixel is black. PrintWindow draws menu screens black; a match draws.
 /// </param>
+/// <param name="Attempts">
+/// The frames taken: a black frame is taken again, up to 8 times, 100 ms apart.
+/// </param>
 public readonly record struct GameWindowCapture(
     bool Ok,
     string Reason,
     string Path = null,
     int Width = 0,
     int Height = 0,
-    bool Black = false
+    bool Black = false,
+    int Attempts = 0
 );
 
 /// <summary>
@@ -35,6 +40,8 @@ public static class GameWindow
 {
     private const int MinWidth = 640;
     private const int MinHeight = 480;
+    private const int PrintAttempts = 8;
+    private static readonly TimeSpan PrintRetryDelay = TimeSpan.FromMilliseconds(100);
 
     /// <summary>
     /// The client's game window: the largest visible window of the process whose title names
@@ -114,7 +121,46 @@ public static class GameWindow
             return new GameWindowCapture(false, "empty-window", Width: width, Height: height);
         }
 
+        // PrintWindow returns an all-black frame now and then (about one in three during a replay
+        // on ASA-SERVER), so a black frame is taken again before it is kept.
         byte[] bgra = new byte[width * height * 4];
+        bool black = true;
+        int attempts = 0;
+        while (black && attempts < PrintAttempts)
+        {
+            if (attempts++ > 0)
+            {
+                Thread.Sleep(PrintRetryDelay);
+            }
+
+            if (!Print(window, width, height, bgra))
+            {
+                return new GameWindowCapture(
+                    false,
+                    "print-failed",
+                    Width: width,
+                    Height: height,
+                    Attempts: attempts
+                );
+            }
+
+            black = Png.IsMostlyBlack(bgra);
+        }
+
+        string full = System.IO.Path.GetFullPath(path);
+        string directory = System.IO.Path.GetDirectoryName(full);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+
+        File.WriteAllBytes(full, Png.Encode(bgra, width, height));
+        return new GameWindowCapture(true, "ok", full, width, height, black, attempts);
+    }
+
+    // One PrintWindow of the client area into top-down BGRA pixels.
+    private static bool Print(IntPtr window, int width, int height, byte[] bgra)
+    {
         IntPtr screen = WindowNativeMethods.GetDC(IntPtr.Zero);
         IntPtr memory = WindowNativeMethods.CreateCompatibleDC(screen);
         IntPtr bitmap = WindowNativeMethods.CreateCompatibleBitmap(screen, width, height);
@@ -130,7 +176,7 @@ public static class GameWindow
                 )
             )
             {
-                return new GameWindowCapture(false, "print-failed", Width: width, Height: height);
+                return false;
             }
 
             WindowNativeMethods.SelectObject(memory, previous);
@@ -142,8 +188,7 @@ public static class GameWindow
                 Planes = 1,
                 BitCount = 32,
             };
-            if (
-                WindowNativeMethods.GetDIBits(
+            return WindowNativeMethods.GetDIBits(
                     memory,
                     bitmap,
                     0,
@@ -151,11 +196,7 @@ public static class GameWindow
                     bgra,
                     ref header,
                     WindowNativeMethods.DibRgbColors
-                ) == 0
-            )
-            {
-                return new GameWindowCapture(false, "print-failed", Width: width, Height: height);
-            }
+                ) != 0;
         }
         finally
         {
@@ -164,16 +205,6 @@ public static class GameWindow
             WindowNativeMethods.DeleteDC(memory);
             WindowNativeMethods.ReleaseDC(IntPtr.Zero, screen);
         }
-
-        string full = System.IO.Path.GetFullPath(path);
-        string directory = System.IO.Path.GetDirectoryName(full);
-        if (!string.IsNullOrEmpty(directory))
-        {
-            Directory.CreateDirectory(directory);
-        }
-
-        File.WriteAllBytes(full, Png.Encode(bgra, width, height));
-        return new GameWindowCapture(true, "ok", full, width, height, Png.IsMostlyBlack(bgra));
     }
 
     internal static List<IntPtr> WithVisibleChildren(IntPtr window)
