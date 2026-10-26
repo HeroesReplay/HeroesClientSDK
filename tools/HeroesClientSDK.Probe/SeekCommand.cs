@@ -81,7 +81,10 @@ internal sealed class SeekCommand
             return Report("no-client", null, watch.Elapsed, restart, null);
         }
 
-        if (Replay != null && client.Position().Screen is ClientScreenKind.Home or ClientScreenKind.Menu)
+        if (
+            Replay != null
+            && client.Position().Screen is ClientScreenKind.Home or ClientScreenKind.Menu
+        )
         {
             OpenReplay(client);
         }
@@ -96,7 +99,12 @@ internal sealed class SeekCommand
             client.Keys.Send(ReplayKey.Escape);
             Thread.Sleep(800);
             client.Keys.Send(ReplayKey.QuitReplay);
-            if (!client.WaitFor(MenuTimeout, p => p.Screen is ClientScreenKind.Home or ClientScreenKind.Menu))
+            if (
+                !client.WaitFor(
+                    MenuTimeout,
+                    p => p.Screen is ClientScreenKind.Home or ClientScreenKind.Menu
+                )
+            )
             {
                 return Report("no-menu", result, watch.Elapsed, again.Elapsed, null);
             }
@@ -183,7 +191,9 @@ internal sealed class SeekCommand
             : "-";
 
     private static string Seconds(TimeSpan? time) =>
-        time is TimeSpan t ? t.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s" : "-";
+        time is TimeSpan t
+            ? t.TotalSeconds.ToString("0.0", CultureInfo.InvariantCulture) + " s"
+            : "-";
 
     /// <summary>One client process with its read-only readers and its window keys.</summary>
     private sealed class Client : IDisposable

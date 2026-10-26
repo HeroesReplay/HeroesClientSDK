@@ -74,7 +74,8 @@ public static class GameWindow
                     width >= MinWidth
                     && height >= MinHeight
                     && area > titledArea
-                    && Title(hwnd).Contains("Heroes of the Storm", StringComparison.OrdinalIgnoreCase)
+                    && Title(hwnd)
+                        .Contains("Heroes of the Storm", StringComparison.OrdinalIgnoreCase)
                 )
                 {
                     titledArea = area;

@@ -6,7 +6,7 @@ namespace HeroesClientSDK;
 
 /// <summary>
 /// The user32 and gdi32 calls of the window helpers: find a client's game window, post it keys
-/// (<see cref="WindowReplayKeys"/>) and copy its client area (<see cref="GameWindow.CapturePng"/>).
+/// (<see cref="WindowReplayKeys"/>) and copy its client area (<see cref="GameWindow.CapturePng(IntPtr, string)"/>).
 /// Nothing here opens the client process or touches its memory.
 /// </summary>
 internal static class WindowNativeMethods

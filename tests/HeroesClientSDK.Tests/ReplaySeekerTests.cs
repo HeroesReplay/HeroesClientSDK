@@ -86,7 +86,7 @@ public class ReplaySeekerTests
 
         Assert.True(result.Ok);
         Assert.Equal(ReplayKey.Pause, replay.Sent[0]);
-        Assert.Equal(1, replay.Sent.FindAll(key => key == ReplayKey.Pause).Count);
+        Assert.Single(replay.Sent, key => key == ReplayKey.Pause);
         Assert.InRange(replay.Time.TotalSeconds, 120, 121);
     }
 
@@ -186,11 +186,7 @@ public class ReplaySeekerTests
             new(
                 this,
                 Read,
-                new ReplaySeekOptions
-                {
-                    TimeProvider = new TestTime(() => now),
-                    Delay = Wait,
-                }
+                new ReplaySeekOptions { TimeProvider = new TestTime(() => now), Delay = Wait }
             );
 
         public bool Send(ReplayKey key)

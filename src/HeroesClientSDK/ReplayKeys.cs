@@ -98,7 +98,8 @@ public sealed class WindowReplayKeys : IReplayKeys
             ReplayKey.QuitReplay => [0x51],
             ReplayKey.ToggleObserverTools => [Control, Shift, 0x4F],
             ReplayKey.Player10 => [0x30],
-            >= ReplayKey.Player1 and <= ReplayKey.Player9 => [
+            >= ReplayKey.Player1 and <= ReplayKey.Player9 =>
+            [
                 (ushort)(0x31 + (key - ReplayKey.Player1)),
             ],
             _ => throw new ArgumentOutOfRangeException(nameof(key), key, null),
