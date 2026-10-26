@@ -21,8 +21,14 @@ Read-only access to a running Heroes of the Storm client's memory on Windows:
   rank points here, not MMR. The layout comes from the client's code and has not yet been
   confirmed on a ranked game (HeroesClientSDK#19).
 
-Nothing here writes to the client, injects code, or reads the screen. Every reader opens the
-process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only.
+- **Replay control** (`ReplaySeeker`, `WindowReplayKeys`, `GameWindow`): moves a running replay
+  to a match time with the replay's own speed keys (about 11 times real time), pauses it, follows
+  a player, and saves a PNG of the game window. `heroes-client-probe --seek` runs it from a shell.
+
+Nothing here writes to the client, injects code, or calls its functions. Every reader opens the
+process with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only and never reads the screen. Replay
+control's only input is the client's replay hotkeys, posted to its game window, and its capture
+is `PrintWindow` of that window (AGENTS.md rule 1).
 
 This code was moved out of [HeroesReplay](https://github.com/HeroesReplay/HeroesReplay), the
 automated Heroes of the Storm spectator, which uses it to drive replays.
@@ -337,6 +343,52 @@ Each line has the build, the menu screen and the screens shown, the dialogs show
 game-launch result and the launch state, the map loading and signed-in states, the loading screen
 reader, and the match clock. The three readers share one `HeroesClientProcess` per client.
 `--version 2.57.0.98304` reports a client that is another build.
+
+### Seeking a replay and saving a screenshot
+
+`--seek` moves a running replay to a match time, then can pause, follow a player and save a PNG
+of the game window, for example a before and after shot of an interface change:
+
+```powershell
+heroes-client-probe --seek 20:00 --pause --player 3 --shot shots\li-ming-20m.png
+heroes-client-probe --seek 5:00 --replay C:\replays\66059611.StormReplay   # behind the match: replays it from the start
+```
+
+- **How:** numpad + five times (Normal, Faster, x2, x4, x8), the match clock read every 100 ms,
+  numpad - five times 6 s before the target, and a stop on the second. About 5.5 s of real time
+  per minute of match time on ASA-SERVER (10:00 in 56 s). P pauses (`--pause`), 1 to 0 follow a
+  player (`--player`), and `--panel` sends AhliObs' Ctrl+Shift+O so the replay panel shows.
+- **Time:** the target is match time, the same as the replay panel's time and game loops / 16.
+  AhliObs' HUD timer runs behind it by the map's gate delay (38 s on Haunted Mines); add that with
+  `--hud-offset 38` to give a HUD time.
+- **A paused replay:** a match clock that has not moved for 5 s is taken as paused, and P is
+  pressed once.
+- **Behind the match:** a replay only plays forward. Without `--replay` that is `behind-target`.
+  With it, the probe presses Esc and Q (Quit Replay), waits for a menu, opens the file with the
+  install's `Support64\HeroesSwitcher_x64.exe` (`--switcher` to choose another) and seeks from
+  the start. `--replay` also opens the file when the client is on the home screen or a menu.
+- **No client:** it never starts one. Start the client as the heroes-client-launch skill says,
+  under the lock.
+- **Background:** posted keys and `PrintWindow` work with the game window behind others or
+  minimised, as over an RDP session without input focus, where mouse input and `SendInput` do
+  not reach the game. `PrintWindow` draws menu screens black; a match draws.
+- **Output:** a summary line and a JSON line (`ok`, `reason`, `target`, `from`, `reached`,
+  `seekSeconds`, `restartSeconds`, `totalSeconds`, `screenshot`, `screenshotBlack`). Exit 0 when
+  it reached the target, 1 when not (`behind-target`, `no-match`, `left-match` past the replay's
+  end, `no-window`, `timeout`, `no-client`, `no-menu`, `shot-*`), 2 for a bad argument.
+
+From code, the same thing on one client:
+
+```csharp
+using HeroesClientProcess attached = HeroesClientProcess.Attach(client);
+using var screens = new ClientScreen();
+using var clock = new MatchClock();
+ReplaySeekResult seek = await ReplaySeeker
+    .For(attached, screens, clock)
+    .SeekAsync(TimeSpan.FromMinutes(20), pause: true);
+new WindowReplayKeys(client).Send(WindowReplayKeys.Player(3));
+GameWindowCapture shot = GameWindow.CapturePng(client, "li-ming-20m.png");
+```
 
 ### Capturing a Storm League result
 

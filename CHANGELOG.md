@@ -5,6 +5,24 @@ Each release is a `vX.Y.Z` tag on `main`. Its `.nupkg` and SHA-256 are on the
 
 ## Unreleased
 
+Replay control, approved by the owner on 2026-10-26 (AGENTS.md rule 1 now names it). Additive:
+every read behaves as before, and nothing writes to the client or calls its functions.
+
+- **`ReplaySeeker`**: moves a running replay forward to a match time with the replay speed keys
+  (up to x8, back to Normal 6 s before the target), stopping on the second by the match clock.
+  `SeekAsync(target, pause)` returns a `ReplaySeekResult` (`reached`, `behind-target`, `no-match`,
+  `left-match`, `no-window`, `timeout`). A still match clock for 5 s presses P once. `For(client,
+  screens, clock)` builds one over a client's readers; any `IReplayKeys` and position source work.
+- **`WindowReplayKeys`**: posts a `ReplayKey` (speed up and down, pause, Esc, Quit Replay, players
+  1 to 10, AhliObs' Ctrl+Shift+O) to the client's game window and its visible children with
+  `PostMessage`, as HeroesReplay's spectator does. It works with the window in the background.
+- **`GameWindow`**: finds a client's game window and writes its client area to a PNG with
+  `PrintWindow` (`GameWindowCapture`, with a black-frame flag).
+- **`heroes-client-probe --seek mm:ss`**: the same from a shell, with `--pause`, `--player`,
+  `--panel`, `--shot`, `--replay` (open it, or replay it from the start for a target behind the
+  match), `--hud-offset` and `--pid`.
+
+
 The Storm League result of the local player's last game, for HeroesClientSDK#19. Additive: no
 0.4.x name changes, and every read behaves as before. Not released until a ranked game confirms
 the layout (`heroes-client-probe --rank`).

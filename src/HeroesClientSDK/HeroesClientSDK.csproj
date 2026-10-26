@@ -7,8 +7,8 @@
         <PackageId>HeroesClientSDK</PackageId>
         <Authors>Heroes Replay</Authors>
         <Company>Heroes Replay</Company>
-        <Description>Read-only Heroes of the Storm client memory for Windows: the match clock and which screen the client shows (menu, map loading, match), found per client build.</Description>
-        <PackageTags>heroes-of-the-storm;hots;memory;match-clock;windows</PackageTags>
+        <Description>Read-only Heroes of the Storm client memory for Windows: the match clock and which screen the client shows (menu, map loading, match), found per client build. Replay control moves a replay to a match time with the client's own replay keys and saves a PNG of its window.</Description>
+        <PackageTags>heroes-of-the-storm;hots;memory;match-clock;windows;replay</PackageTags>
         <PackageLicenseFile>LICENSE</PackageLicenseFile>
         <PackageProjectUrl>https://github.com/HeroesReplay/HeroesClientSDK</PackageProjectUrl>
         <RepositoryUrl>https://github.com/HeroesReplay/HeroesClientSDK</RepositoryUrl>

@@ -7,7 +7,9 @@ This is the contract for coding agents in this repository. Code and this file wi
 HeroesClientSDK is read-only access to a running Heroes of the Storm client's memory on Windows:
 the match clock (`MatchClock`), the loading screen (`LoadingScreen`), the menu screens
 (`ClientScreen`) and the Storm League result (`MatchRank`, `MatchRankWatcher`), on one read-only
-attachment per process (`HeroesClientProcess`). It is a
+attachment per process (`HeroesClientProcess`). Replay control (`ReplaySeeker`,
+`WindowReplayKeys`, `GameWindow`) moves a replay to a match time with the client's own replay
+keys and saves a PNG of its window (rule 1). It is a
 `net10.0` library published as a NuGet package. Its main consumer is
 [HeroesReplay](https://github.com/HeroesReplay/HeroesReplay), which pins each release by version and
 SHA-256. The usage, the install, the build and the release steps are in [README.md](README.md).
@@ -16,14 +18,20 @@ SHA-256. The usage, the install, the build and the release steps are in [README.
 | --- | --- |
 | `src/HeroesClientSDK` | The library (the package) |
 | `tests/HeroesClientSDK.Tests` | xUnit tests: recorded bytes and fake reads, never a live client |
-| `tools/HeroesClientSDK.Probe` | `heroes-client-probe`: prints what the SDK reads from every running client, read-only; `--image <file>` checks every reader's discovery on a saved module image, offline; `--rank` captures the Storm League result |
+| `tools/HeroesClientSDK.Probe` | `heroes-client-probe`: prints what the SDK reads from every running client, read-only; `--image <file>` checks every reader's discovery on a saved module image, offline; `--rank` captures the Storm League result; `--seek mm:ss` moves a running replay to a match time with the replay keys and can pause, follow a player and save a PNG |
 | `.agents/skills` | The agent skills below |
 
 ## Rules
 
-1. **Read-only.** A reader opens the client with `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ`
-   only. No writes, no injected code or threads, no debugger, no suspended threads, no window input.
-   Nothing reads the screen.
+1. **Read-only memory; replay keys are the only input.** A reader opens the client with
+   `PROCESS_QUERY_INFORMATION | PROCESS_VM_READ` only. No writes, no injected code or threads, no
+   debugger, no suspended threads, no calls into client functions, and no reader reads the screen.
+   The one exception is replay control, which the owner approved on 2026-10-26: `WindowReplayKeys`
+   posts the client's own replay hotkeys (`ReplayKey`: speed, pause, Quit Replay, players, AhliObs'
+   observer tools) to its game window with `PostMessage`, and `GameWindow.CapturePng` copies that
+   window with `PrintWindow`. They never open the process. No mouse input, no `SendInput`, and no
+   key that is not a `ReplayKey`. `ReplaySeeker` drives a replay only through those keys and the
+   readers.
 2. **Several clients at once.** Readers keep no static or global client state. One reader per client
    process. A new pid or process start time starts discovery over. Two clients of different builds
    (the switcher handoff, or a current and a previous patch) must read correctly side by side.
