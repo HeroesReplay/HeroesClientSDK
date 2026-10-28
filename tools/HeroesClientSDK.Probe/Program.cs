@@ -6,10 +6,11 @@ using System.IO;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using HeroesClientSDK;
 
-// Read-only probe: prints what HeroesClientSDK reads from every running Heroes of the Storm
-// client. Nothing is written to a client.
+// Probe: prints what HeroesClientSDK reads from every running Heroes of the Storm client.
+// Nothing is written to a client. Only --seek sends input: replay keys posted to the game window.
 //
 //   heroes-client-probe                 one read of each client
 //   heroes-client-probe --watch [ms]    a line whenever a client's reading changes (Ctrl+C stops)
@@ -18,14 +19,49 @@ using HeroesClientSDK;
 //   heroes-client-probe --rank [--watch ms] [--out file.jsonl]
 //                                       the score screen's Storm League result (HeroesClientSDK#19):
 //                                       a JSON line per change, until Ctrl+C
+//   heroes-client-probe --seek mm:ss [--pause] [--player 1-10] [--panel] [--shot file.png]
+//                       [--replay file.StormReplay] [--hud-offset s] [--pid n] [--switcher exe]
+//                                       moves a running replay to a match time with the speed
+//                                       keys (ReplaySeeker), then a summary and a JSON line
 
 int interval = 0;
 HeroesClientVersion expected = null;
 string image = null;
 bool rank = false;
 string output = null;
+string seek = null;
+var seekOptions = new Dictionary<string, string>();
+bool pause = false;
+bool panel = false;
 for (int i = 0; i < args.Length; i++)
 {
+    if (args[i] == "--seek" && i + 1 < args.Length)
+    {
+        seek = args[++i];
+        continue;
+    }
+
+    if (
+        args[i] is "--player" or "--shot" or "--replay" or "--hud-offset" or "--pid" or "--switcher"
+        && i + 1 < args.Length
+    )
+    {
+        seekOptions[args[i]] = args[++i];
+        continue;
+    }
+
+    if (args[i] == "--pause")
+    {
+        pause = true;
+        continue;
+    }
+
+    if (args[i] == "--panel")
+    {
+        panel = true;
+        continue;
+    }
+
     if (args[i] == "--image" && i + 1 < args.Length)
     {
         image = args[++i];
@@ -58,10 +94,15 @@ for (int i = 0; i < args.Length; i++)
     else if (args[i] is "-h" or "--help")
     {
         Console.WriteLine(
-            "heroes-client-probe [--watch [ms]] [--version 2.57.0.98304] | --image <file> [--version ...] | --rank [--watch ms] [--out file.jsonl]"
+            "heroes-client-probe [--watch [ms]] [--version 2.57.0.98304] | --image <file> [--version ...] | --rank [--watch ms] [--out file.jsonl] | --seek mm:ss [--pause] [--player 1-10] [--panel] [--shot file.png] [--replay file.StormReplay] [--hud-offset s] [--pid n] [--switcher exe]"
         );
         return 0;
     }
+}
+
+if (seek != null)
+{
+    return await Seek(seek, seekOptions, pause, panel);
 }
 
 if (image != null)
@@ -129,6 +170,60 @@ foreach (Readers reader in readers.Values)
 }
 
 return 0;
+
+// --seek: the target is match time (the replay panel's time). --hud-offset adds the map's gate
+// delay so the target can be given as AhliObs' HUD time instead (38 s on Haunted Mines).
+static async Task<int> Seek(
+    string target,
+    Dictionary<string, string> options,
+    bool pause,
+    bool panel
+)
+{
+    string Option(string name) => options.TryGetValue(name, out string value) ? value : null;
+    int? Number(string name) =>
+        Option(name) is string text
+        && int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int n)
+            ? n
+            : null;
+
+    if (!SeekCommand.TryParseTime(target, out TimeSpan time))
+    {
+        Console.WriteLine($"--seek {target}: not mm:ss, h:mm:ss or seconds");
+        return 2;
+    }
+
+    if (Option("--hud-offset") is string offsetText)
+    {
+        if (!SeekCommand.TryParseTime(offsetText, out TimeSpan offset))
+        {
+            Console.WriteLine($"--hud-offset {offsetText}: not seconds or mm:ss");
+            return 2;
+        }
+
+        time += offset;
+    }
+
+    int? player = Number("--player");
+    if (Option("--player") != null && player is not (>= 1 and <= 10))
+    {
+        Console.WriteLine($"--player {Option("--player")}: 1 to 10");
+        return 2;
+    }
+
+    var command = new SeekCommand
+    {
+        Target = time,
+        Pause = pause,
+        Player = player,
+        TogglePanel = panel,
+        Shot = Option("--shot"),
+        Replay = Option("--replay"),
+        Switcher = Option("--switcher"),
+        ProcessId = Number("--pid"),
+    };
+    return await command.RunAsync();
+}
 
 // The score screen's Storm League result of every running client (MatchRank, through
 // RankCapture), every interval ms until Ctrl+C. A capture that differs from the client's last one
