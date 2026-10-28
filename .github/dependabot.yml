@@ -1,0 +1,24 @@
+# Keeps the NuGet packages, the dotnet tools and the workflow actions current, as in HeroesReplay.
+version: 2
+updates:
+  # Directory.Packages.props and .config/dotnet-tools.json.
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+      day: wednesday
+    labels:
+      - dependencies
+    groups:
+      test-stack:
+        patterns:
+          - Microsoft.NET.Test.Sdk
+          - xunit*
+          - coverlet.*
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels:
+      - dependencies
