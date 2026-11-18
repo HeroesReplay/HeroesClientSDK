@@ -115,9 +115,8 @@ public class AnyClientTests
         // as on a client that has just started.
         using Process self = Process.GetCurrentProcess();
 
-        using HeroesClientProcess client = HeroesClientProcess.Attach(
-            self,
-            _ => throw new System.ComponentModel.Win32Exception(299)
+        using HeroesClientProcess client = HeroesClientProcess.Attach(self, _ =>
+            throw new System.ComponentModel.Win32Exception(299)
         );
 
         Assert.False(client.Ok);

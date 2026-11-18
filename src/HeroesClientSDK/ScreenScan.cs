@@ -97,13 +97,8 @@ internal sealed class ScreenScan
             }
 
             long end = section.VirtualAddress + section.VirtualSize;
-            ModuleScanner.Walk(
-                memory,
-                module.BaseAddress,
-                section,
-                Overlap,
-                (slice, rva) =>
-                    scan.Visit(slice, rva, (int)Math.Min(ModuleScanner.Chunk, end - rva))
+            ModuleScanner.Walk(memory, module.BaseAddress, section, Overlap, (slice, rva) =>
+                scan.Visit(slice, rva, (int)Math.Min(ModuleScanner.Chunk, end - rva))
             );
         }
 
