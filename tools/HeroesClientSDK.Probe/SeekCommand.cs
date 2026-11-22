@@ -100,9 +100,8 @@ internal sealed class SeekCommand
             Thread.Sleep(800);
             client.Keys.Send(ReplayKey.QuitReplay);
             if (
-                !client.WaitFor(
-                    MenuTimeout,
-                    p => p.Screen is ClientScreenKind.Home or ClientScreenKind.Menu
+                !client.WaitFor(MenuTimeout, p =>
+                    p.Screen is ClientScreenKind.Home or ClientScreenKind.Menu
                 )
             )
             {

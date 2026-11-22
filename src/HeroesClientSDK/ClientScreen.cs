@@ -463,11 +463,8 @@ public sealed class ClientScreen : IDisposable
 
         nextPanelWalk = time.GetUtcNow() + PanelWalkInterval;
         panelTop = FrameTree.Top(memory, frameLayout, root);
-        (long frame, long vtable) = FrameTree.FindFirst(
-            memory,
-            frameLayout,
-            panelTop,
-            candidate => ClassOf(memory, candidate) == awardsPanel.Name
+        (long frame, long vtable) = FrameTree.FindFirst(memory, frameLayout, panelTop, candidate =>
+            ClassOf(memory, candidate) == awardsPanel.Name
         );
         awardsPanel.Frame = frame;
         awardsPanel.Vtable = vtable;
